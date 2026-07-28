@@ -24,6 +24,7 @@ const C = {
 // ── Estado global ──────────────────────────────────────────────────
 const initialState = {
   pacientes: [],
+  tabelasPreco: [],
   orcamentos: [],
   baixas: [],
   pagamentos: [],
@@ -61,6 +62,19 @@ function reducer(state, action) {
         nextFicha: Math.max(state.nextFicha, Number(action.payload.ficha) + 1),
       };
     }
+    case "LOAD_TABELAS_PRECO":
+      return { ...state, tabelasPreco: action.payload };
+    case "ADD_TABELA_PRECO_PERSISTED":
+      return { ...state, tabelasPreco: [...state.tabelasPreco, action.payload] };
+    case "UPDATE_TABELA_PRECO_PERSISTED":
+      return {
+        ...state,
+        tabelasPreco: state.tabelasPreco.map(t => t.id === action.payload.id ? action.payload : t),
+      };
+    case "DELETE_TABELA_PRECO_PERSISTED":
+      return { ...state, tabelasPreco: state.tabelasPreco.filter(t => t.id !== action.payload) };
+    case "UNSET_DEFAULT_TABELAS_PRECO":
+      return { ...state, tabelasPreco: state.tabelasPreco.map(t => ({ ...t, padrao: false })) };
     case "REPLACE_PACIENTE_ID": {
       const { localId, supabaseId } = action.payload;
       return {
@@ -74,6 +88,7 @@ function reducer(state, action) {
       const dados = action.payload;
       return {
         pacientes: dados.pacientes || [],
+        tabelasPreco: dados.tabelasPreco || [],
         orcamentos: dados.orcamentos || [],
         baixas: dados.baixas || [],
         pagamentos: dados.pagamentos || [],
@@ -730,26 +745,26 @@ function Select({ label, children, ...props }) {
 
 // Campo de busca de procedimento por nome ou código, com dropdown filtrado.
 // value = código selecionado (ou "" se nenhum). onSelect(cod) é chamado ao escolher.
-function ProcSearch({ label, value, onSelect, hasError, placeholder }) {
-  const selecionado = value ? PROC_MAP[Number(value)] : null;
+function ProcSearch({ label, value, onSelect, hasError, placeholder, catalogo }) {
+  const itensDisponiveis = catalogo || TABELA.flatMap(g => g.itens.map(it => ({ ...it, grupo: g.grupo })));
+  const selecionado = value ? itensDisponiveis.find(it => String(it.cod) === String(value)) : null;
   const [query, setQuery] = useState(selecionado ? `${selecionado.cod} · ${selecionado.proc}` : "");
   const [aberto, setAberto] = useState(false);
   const [hoverIdx, setHoverIdx] = useState(0);
 
   // mantém o texto sincronizado se o value mudar de fora (ex: limpar formulário)
   useEffect(() => {
-    const s = value ? PROC_MAP[Number(value)] : null;
+    const s = value ? itensDisponiveis.find(it => String(it.cod) === String(value)) : null;
     setQuery(s ? `${s.cod} · ${s.proc}` : "");
-  }, [value]);
+  }, [value, catalogo]);
 
   const termo = query.trim().toLowerCase();
   const resultados = useMemo(() => {
-    if (!termo) return TABELA.flatMap(g => g.itens).slice(0, 8);
-    const todos = TABELA.flatMap(g => g.itens.map(it => ({ ...it, grupo: g.grupo })));
-    return todos.filter(it =>
+    if (!termo) return itensDisponiveis.slice(0, 8);
+    return itensDisponiveis.filter(it =>
       it.proc.toLowerCase().includes(termo) || String(it.cod).includes(termo)
     ).slice(0, 8);
-  }, [termo]);
+  }, [termo, catalogo]);
 
   function escolher(item) {
     onSelect(item.cod);
@@ -2085,6 +2100,115 @@ function RodapeClinica() {
   );
 }
 
+function TabelasPreco({ state, dispatch }) {
+  const nova = () => ({ nome: "", tipo: "particular", convenioId: "", ativo: true, padrao: false, itens: [] });
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(nova());
+  const [erro, setErro] = useState("");
+
+  function abrir(tabela, duplicar = false) {
+    setForm(tabela ? {
+      ...tabela,
+      id: duplicar ? undefined : tabela.id,
+      nome: duplicar ? `${tabela.nome} (cópia)` : tabela.nome,
+      padrao: duplicar ? false : tabela.padrao,
+      convenioId: tabela.convenioId || "",
+      itens: tabela.itens.map(i => ({ ...i })),
+    } : nova());
+    setModal(tabela && !duplicar ? "editar" : "novo");
+    setErro("");
+  }
+
+  const alterarItem = (i, campo, valor) => setForm(f => ({
+    ...f, itens: f.itens.map((item, idx) => idx === i ? { ...item, [campo]: valor } : item),
+  }));
+
+  function salvar() {
+    if (!form.nome.trim()) { setErro("Informe o nome da tabela."); return; }
+    if (form.itens.some(i => !String(i.cod).trim() || !i.proc.trim() || Number(i.valor) < 0)) {
+      setErro("Preencha código, procedimento e valor de todos os itens."); return;
+    }
+    const codigos = form.itens.map(i => String(i.cod).trim());
+    if (new Set(codigos).size !== codigos.length) { setErro("Não repita códigos na mesma tabela."); return; }
+    const payload = {
+      ...form,
+      convenioId: form.tipo === "convenio" && form.convenioId ? form.convenioId : null,
+      itens: form.itens.map(i => ({ cod: String(i.cod).trim(), proc: i.proc.trim(), grupo: i.grupo.trim() || "Geral", valor: Number(i.valor) || 0 })),
+    };
+    dispatch({ type: modal === "novo" ? "ADD_TABELA_PRECO" : "UPDATE_TABELA_PRECO", payload });
+    setModal(null);
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 20, alignItems: "center" }}>
+        <span style={{ color: C.muted, fontSize: 13 }}>Modelos reutilizáveis para particulares, convênios e outras modalidades.</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!state.tabelasPreco.length && (
+            <Btn variant="ghost" onClick={() => abrir({
+              nome: "Particular padrão", tipo: "particular", convenioId: null, ativo: true, padrao: true,
+              itens: TABELA.flatMap(g => g.itens.map(i => ({ ...i, grupo: g.grupo }))),
+            }, true)}>Importar tabela atual</Btn>
+          )}
+          <Btn onClick={() => abrir()}>+ Nova tabela</Btn>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {state.tabelasPreco.map(t => (
+          <Card key={t.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <strong style={{ color: C.navy }}>{t.nome}</strong>
+                <Badge color={t.tipo === "convenio" ? "amber" : "teal"}>{t.tipo === "particular" ? "Particular" : t.tipo === "convenio" ? "Convênio" : "Outro"}</Badge>
+                {t.padrao && <Badge color="green">PADRÃO</Badge>}
+                {!t.ativo && <Badge color="red">INATIVA</Badge>}
+              </div>
+              <div style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>{t.itens.length} procedimento(s)</div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn variant="ghost" onClick={() => abrir(t, true)}>Duplicar</Btn>
+              <Btn variant="ghost" onClick={() => abrir(t)}>Editar</Btn>
+              <Btn variant="danger" onClick={() => dispatch({ type: "DELETE_TABELA_PRECO", payload: t.id })}>Excluir</Btn>
+            </div>
+          </Card>
+        ))}
+        {!state.tabelasPreco.length && <div style={{ textAlign: "center", color: C.muted, padding: 40 }}>Nenhuma tabela cadastrada.</div>}
+      </div>
+      {modal && (
+        <Modal title={modal === "novo" ? "Nova tabela de preços" : "Editar tabela de preços"} onClose={() => setModal(null)}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <Input label="Nome da tabela *" value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Select label="Tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}>
+                <option value="particular">Particular</option><option value="convenio">Convênio</option><option value="outro">Outro / personalizado</option>
+              </Select>
+              {form.tipo === "convenio" && <Select label="Convênio relacionado" value={form.convenioId || ""} onChange={e => setForm(f => ({ ...f, convenioId: e.target.value }))}>
+                <option value="">Sem vínculo</option>{state.convenios.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </Select>}
+            </div>
+            <div style={{ display: "flex", gap: 18 }}>
+              <label><input type="checkbox" checked={form.ativo} onChange={e => setForm(f => ({ ...f, ativo: e.target.checked }))} /> Ativa</label>
+              <label><input type="checkbox" checked={form.padrao} onChange={e => setForm(f => ({ ...f, padrao: e.target.checked }))} /> Padrão</label>
+            </div>
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, overflowX: "auto" }}>
+              {form.itens.map((item, i) => <div key={i} style={{ display: "grid", gridTemplateColumns: "80px minmax(180px,1fr) 120px 100px 34px", gap: 8, alignItems: "end", marginBottom: 8 }}>
+                <Input label="Código" value={item.cod} onChange={e => alterarItem(i, "cod", e.target.value)} />
+                <Input label="Procedimento" value={item.proc} onChange={e => alterarItem(i, "proc", e.target.value)} />
+                <Input label="Grupo" value={item.grupo} onChange={e => alterarItem(i, "grupo", e.target.value)} />
+                <Input label="Valor" type="number" min="0" step="0.01" value={item.valor} onChange={e => alterarItem(i, "valor", e.target.value)} />
+                <button onClick={() => setForm(f => ({ ...f, itens: f.itens.filter((_, idx) => idx !== i) }))} style={{ height: 36, border: "none", borderRadius: 8, background: C.redLight, color: C.red }}>×</button>
+              </div>)}
+              <Btn variant="ghost" onClick={() => setForm(f => ({ ...f, itens: [...f.itens, { cod: "", proc: "", grupo: "Geral", valor: "" }] }))}>+ Adicionar procedimento</Btn>
+            </div>
+            {erro && <div style={{ background: C.redLight, color: C.red, padding: 10, borderRadius: 8 }}>{erro}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn><Btn onClick={salvar}>Salvar tabela</Btn></div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function OrcamentoImprimivel({ orcamento, paciente, onClose }) {
   const total = orcamento.itens.reduce((s, i) => s + i.valor, 0);
   const hoje = new Date().toLocaleDateString("pt-BR");
@@ -2660,46 +2784,48 @@ function Orcamentos({ state, dispatch }) {
   const [pacSel, setPacSel] = useState("");
   const [data, setData] = useState(today());
   const [dentista, setDentista] = useState("");
-  const [convenioSel, setConvenioSel] = useState(""); // "" = particular
+  const [tabelaSel, setTabelaSel] = useState("");
   const [itens, setItens] = useState([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   const [busca, setBusca] = useState("");
   const [erroSalvar, setErroSalvar] = useState(false);
   const [visualizando, setVisualizando] = useState(null); // orçamento sendo visualizado/impresso
 
-  const convenio = state.convenios.find(c => c.id === Number(convenioSel));
+  const tabelasAtivas = state.tabelasPreco.filter(t => t.ativo);
+  const tabelaPreco = state.tabelasPreco.find(t => t.id === tabelaSel);
+  const catalogoPreco = tabelaPreco?.itens || [];
+  const convenio = tabelaPreco?.convenioId
+    ? state.convenios.find(c => String(c.id) === String(tabelaPreco.convenioId))
+    : null;
+
+  useEffect(() => {
+    if (!tabelaSel && tabelasAtivas.length) {
+      setTabelaSel((tabelasAtivas.find(t => t.padrao) || tabelasAtivas[0]).id);
+    }
+  }, [state.tabelasPreco, tabelaSel]);
 
   function addItem() { setItens(x => [...x, { cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); }
   function remItem(i) { setItens(x => x.filter((_, idx) => idx !== i)); }
 
-  // Busca valor na tabela do convênio selecionado (se houver), senão usa a tabela particular
   function valorParaProcedimento(cod) {
-    if (convenio) {
-      const naTabela = convenio.tabela?.find(t => t.cod === cod);
-      if (naTabela) return Number(naTabela.valor);
-      return 0; // procedimento fora da tabela do convênio — precisa cadastrar lá
-    }
-    return PROC_MAP[cod]?.valor ?? 0;
+    return Number(catalogoPreco.find(t => String(t.cod) === String(cod))?.valor) || 0;
   }
 
   function selecionarProc(i, cod) {
-    const codNum = Number(cod);
-    const encontrado = PROC_MAP[codNum];
-    const valorAplicavel = valorParaProcedimento(codNum);
+    const codNormalizado = String(cod);
+    const encontrado = catalogoPreco.find(t => String(t.cod) === codNormalizado);
+    const valorAplicavel = valorParaProcedimento(codNormalizado);
     setItens(x => x.map((it, idx) => idx === i
-      ? { ...it, cod: codNum, proc: encontrado?.proc ?? "", valor: valorAplicavel, valorEditado: valorAplicavel }
+      ? { ...it, cod: codNormalizado, proc: encontrado?.proc ?? "", valor: valorAplicavel, valorEditado: valorAplicavel }
       : it
     ));
   }
 
-  // Ao trocar de convênio, recalcula os valores dos itens já selecionados
-  function trocarConvenio(novoConvenioId) {
-    setConvenioSel(novoConvenioId);
-    const conv = state.convenios.find(c => c.id === Number(novoConvenioId));
+  function trocarTabela(novaTabelaId) {
+    setTabelaSel(novaTabelaId);
+    const tabela = state.tabelasPreco.find(t => t.id === novaTabelaId);
     setItens(x => x.map(it => {
       if (!it.cod) return it;
-      const valorAplicavel = conv
-        ? (conv.tabela?.find(t => t.cod === it.cod)?.valor ?? 0)
-        : (PROC_MAP[it.cod]?.valor ?? 0);
+      const valorAplicavel = tabela?.itens.find(t => String(t.cod) === String(it.cod))?.valor ?? 0;
       return { ...it, valor: Number(valorAplicavel), valorEditado: Number(valorAplicavel) };
     }));
   }
@@ -2714,16 +2840,18 @@ function Orcamentos({ state, dispatch }) {
 
   function salvar() {
     const semDentes = itens.some(it => !it.dentes || it.dentes.length === 0);
-    if (!pacSel || !dentista || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
+    if (!pacSel || !dentista || !tabelaSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
     setErroSalvar(false);
     dispatch({
       type: "ADD_ORCAMENTO",
       payload: {
-        pacienteId: Number(pacSel),
+        pacienteId: pacSel,
         data,
         dentista,
         convenioId: convenio ? convenio.id : null,
         convenioNome: convenio ? convenio.nome : null,
+        tabelaPrecoId: tabelaPreco?.id || null,
+        tabelaPrecoNome: tabelaPreco?.nome || null,
         itens: itens.map(it => {
           const qtd = it.dentes?.length || 1;
           const valorUnit = Number(it.valorEditado) || it.valor;
@@ -2731,12 +2859,12 @@ function Orcamentos({ state, dispatch }) {
         }),
       }
     });
-    setModal(false); setPacSel(""); setDentista(""); setConvenioSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
+    setModal(false); setPacSel(""); setDentista(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
   }
 
   function fecharModal() {
     setModal(false);
-    setPacSel(""); setDentista(""); setConvenioSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
+    setPacSel(""); setDentista(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   }
 
   const total = (orc) => orc.itens.reduce((s, i) => s + i.valor, 0);
@@ -2744,7 +2872,7 @@ function Orcamentos({ state, dispatch }) {
     const qtd = i.dentes?.length || 1;
     return s + (Number(i.valorEditado) || 0) * qtd;
   }, 0);
-  const getPac = (id) => state.pacientes.find(p => p.id === id);
+  const getPac = (id) => state.pacientes.find(p => String(p.id) === String(id));
   const statusColor = { pendente: "amber", aprovado: "green", cancelado: "red" };
 
   // Filtra e ordena a lista de orçamentos
@@ -2752,7 +2880,7 @@ function Orcamentos({ state, dispatch }) {
     let lista = [...state.orcamentos];
 
     // Filtro por paciente selecionado
-    if (pacSel) lista = lista.filter(o => o.pacienteId === Number(pacSel));
+    if (pacSel) lista = lista.filter(o => String(o.pacienteId) === String(pacSel));
 
     // Filtro por texto (nome do paciente ou procedimento)
     if (busca.trim()) {
@@ -2883,15 +3011,15 @@ function Orcamentos({ state, dispatch }) {
               ))}
             </Select>
 
-            <Select label="Convênio (opcional — deixe vazio para particular)" value={convenioSel} onChange={e => trocarConvenio(e.target.value)}>
-              <option value="">Particular</option>
-              {state.convenios.map(c => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
+            <Select label="Tabela de preços *" value={tabelaSel} onChange={e => trocarTabela(e.target.value)}>
+              <option value="">Selecione uma tabela…</option>
+              {tabelasAtivas.map(t => (
+                <option key={t.id} value={t.id}>{t.nome} — {t.tipo === "particular" ? "Particular" : t.tipo === "convenio" ? "Convênio" : "Outro"}</option>
               ))}
             </Select>
-            {convenio && (
+            {tabelaPreco && (
               <div style={{ background: C.tealLight, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.teal }}>
-                Os valores dos procedimentos abaixo usarão a tabela de <strong>{convenio.nome}</strong>. Procedimentos fora da tabela do convênio aparecem com valor R$ 0,00 — cadastre-os na ficha do convênio se necessário.
+                Os procedimentos e valores abaixo vêm da tabela <strong>{tabelaPreco.nome}</strong>. O valor pode ser ajustado neste orçamento sem alterar o modelo.
               </div>
             )}
 
@@ -2906,6 +3034,7 @@ function Orcamentos({ state, dispatch }) {
                       value={it.cod}
                       onSelect={(cod) => selecionarProc(i, cod)}
                       hasError={erroSalvar && !it.cod}
+                      catalogo={catalogoPreco}
                     />
                     <button
                       onClick={() => remItem(i)}
@@ -2928,7 +3057,7 @@ function Orcamentos({ state, dispatch }) {
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>
-                          Valor tabela (unitário): <strong>{fmt(PROC_MAP[it.cod]?.valor)}</strong>
+                          Valor tabela (unitário): <strong>{fmt(catalogoPreco.find(p => String(p.cod) === String(it.cod))?.valor || 0)}</strong>
                         </span>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <label style={{ fontSize: 12, color: C.muted, whiteSpace: "nowrap" }}>Valor unitário cobrado (R$):</label>
@@ -2964,7 +3093,7 @@ function Orcamentos({ state, dispatch }) {
 
             {erroSalvar && (
               <div style={{ background: C.redLight, color: C.red, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
-                Selecione o paciente, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
+                Selecione o paciente, a tabela de preços, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
               </div>
             )}
 
@@ -5447,6 +5576,7 @@ const GRUPOS = [
       { id: "pacientes", label: "👤 Pacientes" },
       { id: "dentistas", label: "🩺 Dentistas" },
       { id: "convenios", label: "🏥 Convênios" },
+      { id: "tabelasPreco", label: "💲 Tabelas de Preço" },
       { id: "usuarios",  label: "👥 Usuários" },
       { id: "impressos", label: "🖨 Impressos" },
     ],
@@ -5611,6 +5741,18 @@ function pacienteFromRow(p) {
   };
 }
 
+function tabelaPrecoFromRow(t) {
+  return {
+    id: t.id,
+    nome: t.nome,
+    tipo: t.tipo,
+    convenioId: t.convenio_id || null,
+    ativo: t.ativo,
+    padrao: t.padrao,
+    itens: Array.isArray(t.itens) ? t.itens : [],
+  };
+}
+
 function useSupabaseDispatch(dispatch, session, pacientesRef) {
   return useCallback((action) => {
     async function run() {
@@ -5648,6 +5790,35 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
           return;
         }
         dispatch({ type: "ADD_PACIENTE_PERSISTED", payload: pacienteFromRow(data) });
+      } else if (action.type === "ADD_TABELA_PRECO") {
+        const p = action.payload;
+        if (p.padrao) {
+          await supabase.from("tabelas_preco").update({ padrao: false }).eq("user_id", session.user.id);
+          dispatch({ type: "UNSET_DEFAULT_TABELAS_PRECO" });
+        }
+        const { data, error } = await supabase.from("tabelas_preco").insert({
+          user_id: session.user.id, nome: p.nome, tipo: p.tipo,
+          convenio_id: p.convenioId ? String(p.convenioId) : null,
+          ativo: p.ativo, padrao: p.padrao, itens: p.itens,
+        }).select().single();
+        if (error) { window.alert(`Não foi possível salvar a tabela: ${error.message}`); return; }
+        dispatch({ type: "ADD_TABELA_PRECO_PERSISTED", payload: tabelaPrecoFromRow(data) });
+      } else if (action.type === "UPDATE_TABELA_PRECO") {
+        const p = action.payload;
+        if (p.padrao) {
+          await supabase.from("tabelas_preco").update({ padrao: false }).eq("user_id", session.user.id).neq("id", p.id);
+          dispatch({ type: "UNSET_DEFAULT_TABELAS_PRECO" });
+        }
+        const { data, error } = await supabase.from("tabelas_preco").update({
+          nome: p.nome, tipo: p.tipo, convenio_id: p.convenioId ? String(p.convenioId) : null,
+          ativo: p.ativo, padrao: p.padrao, itens: p.itens, updated_at: new Date().toISOString(),
+        }).eq("id", p.id).select().single();
+        if (error) { window.alert(`Não foi possível atualizar a tabela: ${error.message}`); return; }
+        dispatch({ type: "UPDATE_TABELA_PRECO_PERSISTED", payload: tabelaPrecoFromRow(data) });
+      } else if (action.type === "DELETE_TABELA_PRECO") {
+        const { error } = await supabase.from("tabelas_preco").delete().eq("id", action.payload);
+        if (error) { window.alert(`Não foi possível excluir a tabela: ${error.message}`); return; }
+        dispatch({ type: "DELETE_TABELA_PRECO_PERSISTED", payload: action.payload });
       } else if (action.type === "DELETE_PACIENTE") {
         const pacienteId = action.payload;
         const paciente = pacientesRef.current.find(p => p.id === pacienteId);
@@ -5709,9 +5880,23 @@ export default function App() {
     load();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    async function loadTabelasPreco() {
+      const { data, error } = await supabase
+        .from("tabelas_preco")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: true });
+      if (error) { console.error("Erro ao carregar tabelas de preço:", error); return; }
+      dispatch({ type: "LOAD_TABELAS_PRECO", payload: (data || []).map(tabelaPrecoFromRow) });
+    }
+    loadTabelasPreco();
+  }, [session]);
+
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (action.type === "ADD_PACIENTE" || action.type === "DELETE_PACIENTE") {
+    if (["ADD_PACIENTE", "DELETE_PACIENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       dbDispatch(action);
     } else {
       dispatch(action);
@@ -5893,6 +6078,7 @@ export default function App() {
         {tab === "pacientes"        && <Pacientes state={state} dispatch={patchedDispatch} />}
         {tab === "dentistas"        && <Dentistas state={state} dispatch={patchedDispatch} />}
         {tab === "convenios"        && <Convenios state={state} dispatch={patchedDispatch} />}
+        {tab === "tabelasPreco"     && <TabelasPreco state={state} dispatch={patchedDispatch} />}
         {tab === "impressos"        && <Impressos state={state} />}
         {tab === "historico"        && <HistoricoClinico state={state} dispatch={patchedDispatch} />}
         {tab === "odontograma"      && <Odontograma state={state} dispatch={patchedDispatch} />}
