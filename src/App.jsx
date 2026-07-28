@@ -5788,55 +5788,137 @@ function FileiraPerio({ numeros, label, odo, perio, onDenteClick }) {
 function Periograma({ state, dispatch }) {
   const [pacSel, setPacSel] = useState("");
   const [modo, setModo] = useState("permanente");
-  const [modalDente, setModalDente] = useState(null);
+  const [divisao, setDivisao] = useState("sextantes");
+  const [odontogramaVersaoSel, setOdontogramaVersaoSel] = useState("");
+  const [rascunho, setRascunho] = useState(null);
+  const [modalRegiao, setModalRegiao] = useState(null);
   const [condicoes, setCondicoes] = useState([]);
   const [obs, setObs] = useState("");
   const [modalVersao, setModalVersao] = useState(false);
   const [versaoForm, setVersaoForm] = useState({ data: today(), titulo: "", obs: "" });
-  const odo = pacSel ? (state.odontogramas[pacSel] || {}) : {};
-  const perio = pacSel ? (state.periogramas[pacSel] || {}) : {};
   const DENTES = modo === "permanente" ? DENTES_PERM : DENTES_DEC;
+  const odontogramasPaciente = state.odontogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel))
+    .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  const versoesPaciente = state.periogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel))
+    .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  const ultimaVersao = versoesPaciente[0];
+  const odontogramaVersao = odontogramasPaciente.find(v => String(v.id) === String(odontogramaVersaoSel));
+  const odo = odontogramaVersao?.dentes || {};
+  const perio = rascunho || ultimaVersao?.dentes || {};
 
-  function abrirDente(dente) {
-    setCondicoes([...(perio[dente]?.condicoes || [])]);
-    setObs(perio[dente]?.obs || "");
-    setModalDente({ dente });
+  useEffect(() => {
+    if (!pacSel) {
+      setOdontogramaVersaoSel("");
+      setRascunho(null);
+      return;
+    }
+    const versoesOdo = state.odontogramaVersoes
+      .filter(v => String(v.pacienteId) === String(pacSel))
+      .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const versoesPerio = state.periogramaVersoes
+      .filter(v => String(v.pacienteId) === String(pacSel))
+      .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const referenciaSalva = versoesPerio[0]?.odontogramaVersaoId;
+    setOdontogramaVersaoSel(versoesOdo.some(v => String(v.id) === String(referenciaSalva)) ? referenciaSalva : (versoesOdo[0]?.id || ""));
+    setDivisao(versoesPerio[0]?.divisao || "sextantes");
+    setRascunho(null);
+  }, [pacSel, state.odontogramaVersoes, state.periogramaVersoes]);
+
+  function regioesPara(tipo) {
+    if (tipo === "quadrantes") return [
+      { id: "Q1", label: "Quadrante 1", dentes: DENTES.supDir },
+      { id: "Q2", label: "Quadrante 2", dentes: DENTES.supEsq },
+      { id: "Q3", label: "Quadrante 3", dentes: DENTES.infEsq },
+      { id: "Q4", label: "Quadrante 4", dentes: DENTES.infDir },
+    ];
+    const corte = modo === "permanente" ? 5 : 2;
+    return [
+      { id: "S1", label: "Sextante 1", dentes: DENTES.supDir.slice(0, corte) },
+      { id: "S2", label: "Sextante 2", dentes: [...DENTES.supDir.slice(corte), ...DENTES.supEsq.slice(0, DENTES.supEsq.length - corte)] },
+      { id: "S3", label: "Sextante 3", dentes: DENTES.supEsq.slice(DENTES.supEsq.length - corte) },
+      { id: "S4", label: "Sextante 4", dentes: DENTES.infEsq.slice(DENTES.infEsq.length - corte) },
+      { id: "S5", label: "Sextante 5", dentes: [...DENTES.infEsq.slice(0, DENTES.infEsq.length - corte), ...DENTES.infDir.slice(corte)] },
+      { id: "S6", label: "Sextante 6", dentes: DENTES.infDir.slice(0, corte) },
+    ];
+  }
+
+  const regioes = regioesPara(divisao);
+  function dadosRegiao(regiao, fonte = perio) {
+    const itens = regiao.dentes.map(d => fonte[d]).filter(Boolean);
+    return {
+      condicoes: [...new Set(itens.flatMap(i => i.condicoes || []))],
+      obs: itens.map(i => i.obs).find(Boolean) || "",
+    };
+  }
+
+  function iniciarNovo() {
+    if (!odontogramaVersaoSel) {
+      window.alert("Registre primeiro um momento clínico no Odontograma.");
+      return;
+    }
+    setRascunho(JSON.parse(JSON.stringify(ultimaVersao?.dentes || {})));
+  }
+
+  function trocarReferencia(valor) {
+    if (rascunho && !window.confirm("Trocar o odontograma descartará o rascunho periodontal atual. Continuar?")) return;
+    setOdontogramaVersaoSel(valor);
+    setRascunho(null);
+  }
+
+  function trocarDivisao(tipo) {
+    if (tipo === divisao) return;
+    if (rascunho && !window.confirm("Trocar a divisão descartará o rascunho periodontal atual. Continuar?")) return;
+    setDivisao(tipo);
+    setRascunho(null);
+  }
+
+  function abrirRegiao(regiao) {
+    if (!rascunho) {
+      window.alert("Clique em “Novo periograma” para iniciar um novo registro.");
+      return;
+    }
+    const dados = dadosRegiao(regiao, rascunho);
+    setCondicoes(dados.condicoes);
+    setObs(dados.obs);
+    setModalRegiao(regiao);
   }
 
   function alternar(condicao) {
     setCondicoes(c => c.includes(condicao) ? c.filter(x => x !== condicao) : [...c, condicao]);
   }
 
-  async function salvar() {
-    const action = condicoes.length || obs.trim()
-      ? { type: "UPDATE_PERIOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente, dados: { condicoes, obs } } }
-      : { type: "CLEAR_PERIOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } };
-    const ok = await dispatch(action);
-    if (ok !== false) setModalDente(null);
+  function aplicarRegiao() {
+    setRascunho(atual => {
+      const proximo = { ...(atual || {}) };
+      modalRegiao.dentes.forEach(dente => {
+        if (condicoes.length || obs.trim()) proximo[dente] = { condicoes: [...condicoes], obs: obs.trim() };
+        else delete proximo[dente];
+      });
+      return proximo;
+    });
+    setModalRegiao(null);
   }
 
-  const registros = Object.entries(perio).filter(([, d]) => d.condicoes?.length || d.obs);
-  const versoesPaciente = state.periogramaVersoes
-    .filter(v => String(v.pacienteId) === String(pacSel))
-    .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
-
   async function salvarVersao() {
-    if (!versaoForm.data || !versaoForm.titulo.trim()) {
-      window.alert("Informe a data e o título deste momento periodontal.");
+    if (!rascunho || !odontogramaVersao || !versaoForm.data || !versaoForm.titulo.trim()) {
+      window.alert("Informe a referência do odontograma, a data e o título deste momento periodontal.");
       return;
     }
     const ok = await dispatch({
       type: "ADD_PERIOGRAMA_VERSAO",
       payload: {
-        pacienteId: pacSel,
-        data: versaoForm.data,
-        titulo: versaoForm.titulo.trim(),
-        obs: versaoForm.obs.trim(),
-        dentes: JSON.parse(JSON.stringify(perio)),
+        pacienteId: pacSel, data: versaoForm.data, titulo: versaoForm.titulo.trim(),
+        obs: versaoForm.obs.trim(), dentes: JSON.parse(JSON.stringify(rascunho)), divisao,
+        odontogramaVersaoId: odontogramaVersao.id,
+        odontogramaVersaoTitulo: odontogramaVersao.titulo,
+        odontogramaVersaoData: odontogramaVersao.data,
       },
     });
     if (ok !== false) {
       setModalVersao(false);
+      setRascunho(null);
       setVersaoForm({ data: today(), titulo: "", obs: "" });
     }
   }
@@ -5846,84 +5928,96 @@ function Periograma({ state, dispatch }) {
     await dispatch({ type: "DELETE_PERIOGRAMA_VERSAO", payload: versao.id });
   }
 
+  function FaixasRegioes({ fonte, tipo }) {
+    const lista = regioesPara(tipo);
+    return <div style={{ display: "grid", gridTemplateColumns: `repeat(${tipo === "quadrantes" ? 2 : 3}, 1fr)`, gap: 8, marginTop: 12 }}>
+      {lista.map(regiao => {
+        const dados = dadosRegiao(regiao, fonte);
+        return <button key={regiao.id} onClick={() => fonte === rascunho && abrirRegiao(regiao)} style={{
+          padding: 0, overflow: "hidden", borderRadius: 8, border: `1px solid ${C.border}`,
+          background: C.white, cursor: fonte === rascunho ? "pointer" : "default", textAlign: "left",
+        }}>
+          <div style={{ padding: "5px 8px", fontSize: 10, fontWeight: 800, color: C.navy }}>{regiao.label}</div>
+          {!dados.condicoes.length && <div style={{ height: 6, background: C.bg }} />}
+          {dados.condicoes.map(c => <div key={c} style={{ background: CONDICOES_PERIO[c]?.cor, color: C.white, padding: "4px 8px", fontSize: 10, fontWeight: 700 }}>{CONDICOES_PERIO[c]?.label}</div>)}
+          {dados.obs && <div style={{ padding: "4px 8px", color: C.muted, fontSize: 10 }}>{dados.obs}</div>}
+        </button>;
+      })}
+    </div>;
+  }
+
   return <div>
-    <Card style={{ marginBottom: 14, display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <div style={{ flex: 1, minWidth: 220 }}><Select label="Selecione o paciente" value={pacSel} onChange={e => setPacSel(e.target.value)}>
+    <Card style={{ marginBottom: 14, display: "grid", gap: 12 }}>
+      <Select label="Selecione o paciente" value={pacSel} onChange={e => setPacSel(e.target.value)}>
         <option value="">Escolha um paciente…</option>
         {state.pacientes.map(p => <option key={p.id} value={p.id}>Ficha #{String(p.ficha).padStart(4, "0")} — {p.nome}</option>)}
-      </Select></div>
-      <div style={{ display: "flex", gap: 6 }}>{["permanente", "deciduo"].map(m => <button key={m} onClick={() => setModo(m)} style={{
-        padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
-        border: `2px solid ${modo === m ? C.teal : C.border}`, background: modo === m ? C.tealLight : C.white, color: modo === m ? C.teal : C.muted,
-      }}>{m === "permanente" ? "Permanente" : "Decíduo"}</button>)}</div>
-      {pacSel && <Btn onClick={() => setModalVersao(true)}>+ Registrar momento periodontal</Btn>}
+      </Select>
+      {pacSel && <Select label="Odontograma clínico de referência *" value={odontogramaVersaoSel} onChange={e => trocarReferencia(e.target.value)}>
+        <option value="">Nenhum odontograma clínico salvo</option>
+        {odontogramasPaciente.map(v => <option key={v.id} value={v.id}>{v.data} — {v.titulo}</option>)}
+      </Select>}
+      {pacSel && !odontogramasPaciente.length && <div style={{ background: C.amberLight, color: C.amber, padding: 10, borderRadius: 8, fontSize: 12 }}>Não é possível criar um periograma sem um odontograma clínico salvo. Registre primeiro um momento no Odontograma.</div>}
+      {pacSel && !!odontogramasPaciente.length && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {["permanente", "deciduo"].map(tipo => <Btn key={tipo} variant={modo === tipo ? "primary" : "ghost"} onClick={() => { if (!rascunho || window.confirm("Trocar a dentição descartará o rascunho periodontal atual. Continuar?")) { setModo(tipo); setRascunho(null); } }}>{tipo === "permanente" ? "Permanente" : "Decíduo"}</Btn>)}
+        <span style={{ width: 1, height: 28, background: C.border }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>Dividir a boca em:</span>
+        {["sextantes", "quadrantes"].map(tipo => <Btn key={tipo} variant={divisao === tipo ? "primary" : "ghost"} onClick={() => trocarDivisao(tipo)}>{tipo === "sextantes" ? "6 sextantes" : "4 quadrantes"}</Btn>)}
+        <div style={{ marginLeft: "auto" }}>{!rascunho ? <Btn onClick={iniciarNovo}>+ Novo periograma</Btn> : <><Btn variant="ghost" onClick={() => setRascunho(null)} style={{ marginRight: 8 }}>Cancelar rascunho</Btn><Btn onClick={() => setModalVersao(true)}>Salvar momento periodontal</Btn></>}</div>
+      </div>}
     </Card>
+
     {!pacSel && <div style={{ textAlign: "center", color: C.muted, padding: 60 }}>Selecione um paciente para visualizar o periograma.</div>}
-    {pacSel && <>
+    {pacSel && odontogramaVersao && <>
       <Card style={{ overflowX: "auto", marginBottom: 14 }}>
         <div style={{ minWidth: 640 }}>
-          <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-            {Object.entries(CONDICOES_PERIO).map(([k, v]) => <span key={k} style={{ fontSize: 11 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: v.cor, marginRight: 5 }} />{v.label}</span>)}
-          </div>
+          <div style={{ fontSize: 12, color: C.teal, fontWeight: 700, marginBottom: 12 }}>Odontograma usado: {odontogramaVersao.data} — {odontogramaVersao.titulo}</div>
           <div style={{ display: "flex", justifyContent: "center", gap: 20, marginBottom: 8 }}>
-            <FileiraPerio numeros={DENTES.supDir} label="SUP. DIREITO →" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <FileiraPerio numeros={DENTES.supDir} label="SUP. DIREITO →" odo={odo} perio={{}} onDenteClick={() => {}} />
             <div style={{ width: 1, background: C.border }} />
-            <FileiraPerio numeros={DENTES.supEsq} label="← SUP. ESQUERDO" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <FileiraPerio numeros={DENTES.supEsq} label="← SUP. ESQUERDO" odo={odo} perio={{}} onDenteClick={() => {}} />
           </div>
           <div style={{ height: 1, background: C.border, margin: "10px 0" }} />
           <div style={{ display: "flex", justifyContent: "center", gap: 20 }}>
-            <FileiraPerio numeros={DENTES.infDir} label="INF. DIREITO →" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <FileiraPerio numeros={DENTES.infDir} label="INF. DIREITO →" odo={odo} perio={{}} onDenteClick={() => {}} />
             <div style={{ width: 1, background: C.border }} />
-            <FileiraPerio numeros={DENTES.infEsq} label="← INF. ESQUERDO" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <FileiraPerio numeros={DENTES.infEsq} label="← INF. ESQUERDO" odo={odo} perio={{}} onDenteClick={() => {}} />
           </div>
+          <FaixasRegioes fonte={perio} tipo={divisao} />
         </div>
       </Card>
-      <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginBottom: 14 }}>O estado do dente vem do Odontograma e não pode ser alterado aqui. Clique para registrar condições periodontais.</div>
-      {!!registros.length && <Card><strong style={{ color: C.navy }}>Resumo periodontal</strong>
-        {registros.map(([dente, d]) => <div key={dente} style={{ padding: "8px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
-          <strong>Dente {dente}:</strong> {d.condicoes.map(c => CONDICOES_PERIO[c]?.label).join(", ")}{d.obs && ` — ${d.obs}`}
-        </div>)}
-      </Card>}
+      <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginBottom: 14 }}>{rascunho ? "Rascunho em edição: clique em um quadrante ou sextante para marcar as condições." : ultimaVersao ? `Exibindo o último periograma salvo: ${ultimaVersao.data} — ${ultimaVersao.titulo}` : "Nenhum periograma salvo. Clique em Novo periograma."}</div>
+
       <Card style={{ marginTop: 14 }}>
         <div style={{ fontWeight: 700, color: C.navy, marginBottom: 10 }}>📅 Evolução dos periogramas</div>
         {!versoesPaciente.length && <div style={{ color: C.muted, fontSize: 13 }}>Nenhum momento periodontal registrado.</div>}
-        {versoesPaciente.map(v => {
-          const achados = Object.entries(v.dentes || {}).filter(([, d]) => d.condicoes?.length || d.obs);
-          return <div key={v.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ color: C.muted, fontSize: 11 }}>{achados.length} dente(s) com registro</span>
-                <Btn variant="danger" style={{ padding: "4px 9px", fontSize: 11 }} onClick={() => excluirVersao(v)}>Excluir</Btn>
-              </div>
-            </div>
-            {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{v.obs}</div>}
-            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
-              {achados.map(([dente, d]) => <span key={dente} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 7px", fontSize: 11 }}>
-                {dente}: {(d.condicoes || []).map(c => CONDICOES_PERIO[c]?.label).filter(Boolean).join(", ")}{d.obs ? ` — ${d.obs}` : ""}
-              </span>)}
-            </div>
-          </div>;
-        })}
+        {versoesPaciente.map(v => <div key={v.id} style={{ padding: "12px 0", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+            <div><strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong><div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>Odontograma: {v.odontogramaVersaoData || "—"} — {v.odontogramaVersaoTitulo || "referência anterior"}</div></div>
+            <Btn variant="danger" style={{ padding: "4px 9px", fontSize: 11 }} onClick={() => excluirVersao(v)}>Excluir</Btn>
+          </div>
+          {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 5 }}>{v.obs}</div>}
+          <FaixasRegioes fonte={v.dentes || {}} tipo={v.divisao || "sextantes"} />
+        </div>)}
       </Card>
     </>}
-    {modalVersao && <Modal title="Registrar momento periodontal" onClose={() => setModalVersao(false)}>
+
+    {modalVersao && <Modal title="Salvar momento periodontal" onClose={() => setModalVersao(false)}>
       <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ background: C.bg, padding: 10, borderRadius: 8, fontSize: 12 }}>Vinculado ao odontograma: <strong>{odontogramaVersao?.data} — {odontogramaVersao?.titulo}</strong></div>
         <Input label="Data *" type="date" value={versaoForm.data} onChange={e => setVersaoForm(f => ({ ...f, data: e.target.value }))} />
         <Input label="Título *" value={versaoForm.titulo} onChange={e => setVersaoForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Avaliação periodontal inicial..." />
         <textarea value={versaoForm.obs} onChange={e => setVersaoForm(f => ({ ...f, obs: e.target.value }))} placeholder="Observações deste momento periodontal..." rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
-        <div style={{ background: C.tealLight, color: C.teal, borderRadius: 8, padding: 10, fontSize: 12 }}>Esta versão será imutável e preservará a condição periodontal desta data.</div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalVersao(false)}>Cancelar</Btn><Btn onClick={salvarVersao}>Salvar versão</Btn></div>
       </div>
     </Modal>}
-    {modalDente && <Modal title={`Periograma — Dente ${modalDente.dente}`} onClose={() => setModalDente(null)}>
+
+    {modalRegiao && <Modal title={`${modalRegiao.label} — dentes ${modalRegiao.dentes.join(", ")}`} onClose={() => setModalRegiao(null)}>
       <div style={{ display: "grid", gap: 12 }}>
-        <div style={{ background: C.bg, padding: 10, borderRadius: 8, fontSize: 12 }}>Estado odontológico: <strong>{STATUS_CLINICO[odo[modalDente.dente]?.status || "higido"].label}</strong> (somente leitura)</div>
-        {Object.entries(CONDICOES_PERIO).map(([k, v]) => <label key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: `1.5px solid ${condicoes.includes(k) ? v.cor : C.border}`, borderRadius: 8, cursor: "pointer" }}>
-          <input type="checkbox" checked={condicoes.includes(k)} onChange={() => alternar(k)} /><span style={{ width: 10, height: 10, borderRadius: "50%", background: v.cor }} /><strong>{v.label}</strong>
+        {Object.entries(CONDICOES_PERIO).map(([k, v]) => <label key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: `2px solid ${condicoes.includes(k) ? v.cor : C.border}`, borderRadius: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={condicoes.includes(k)} onChange={() => alternar(k)} /><span style={{ width: 22, height: 7, borderRadius: 3, background: v.cor }} /><strong>{v.label}</strong>
         </label>)}
-        <textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Observações periodontais…" rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalDente(null)}>Cancelar</Btn><Btn onClick={salvar}>Salvar</Btn></div>
+        <textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Observações da região…" rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalRegiao(null)}>Cancelar</Btn><Btn onClick={aplicarRegiao}>Aplicar à região</Btn></div>
       </div>
     </Modal>}
   </div>;
@@ -6164,7 +6258,11 @@ function odontogramaVersaoFromRow(v) {
 function periogramaVersaoFromRow(v) {
   return {
     id: v.id, pacienteId: v.paciente_id, data: v.data, titulo: v.titulo,
-    obs: v.obs || "", dentes: v.dentes || {}, createdAt: v.created_at,
+    obs: v.obs || "", dentes: v.dentes || {}, divisao: v.divisao || "sextantes",
+    odontogramaVersaoId: v.odontograma_versao_id || null,
+    odontogramaVersaoTitulo: v.odontograma_versao_titulo || null,
+    odontogramaVersaoData: v.odontograma_versao_data || null,
+    createdAt: v.created_at,
   };
 }
 
@@ -6322,7 +6420,10 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         const v = action.payload;
         const { data, error } = await supabase.from("periograma_versoes").insert({
           user_id: session.user.id, paciente_id: v.pacienteId, data: v.data,
-          titulo: v.titulo, obs: v.obs, dentes: v.dentes,
+          titulo: v.titulo, obs: v.obs, dentes: v.dentes, divisao: v.divisao,
+          odontograma_versao_id: v.odontogramaVersaoId,
+          odontograma_versao_titulo: v.odontogramaVersaoTitulo,
+          odontograma_versao_data: v.odontogramaVersaoData,
         }).select().single();
         if (error) { window.alert(`Não foi possível salvar a versão do periograma: ${error.message}`); return false; }
         dispatch({ type: "ADD_PERIOGRAMA_VERSAO_PERSISTED", payload: periogramaVersaoFromRow(data) });
