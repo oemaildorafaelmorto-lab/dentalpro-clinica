@@ -2320,6 +2320,20 @@ function TabelasPreco({ state, dispatch }) {
 function OrcamentoImprimivel({ orcamento, paciente, onClose }) {
   const total = orcamento.itens.reduce((s, i) => s + i.valor, 0);
   const hoje = new Date().toLocaleDateString("pt-BR");
+  const relatorioAprovacao = orcamento._tipoRelatorio === "aprovacao";
+
+  function statusDoItem(item) {
+    return item.status || (orcamento.status === "aprovado" || relatorioAprovacao ? "aprovado" : "pendente");
+  }
+
+  function dataAprovacaoDoItem(item, indice) {
+    const direta = item.aprovadoEm;
+    const evento = (orcamento.aprovacoes || []).find(aprovacao =>
+      (aprovacao.itens || []).some(aprovado => aprovado.indice === indice || (aprovado.cod === item.cod && aprovado.proc === item.proc))
+    );
+    const valor = direta || evento?.dataHora || (relatorioAprovacao ? orcamento._aprovacaoData : null);
+    return valor ? new Date(valor).toLocaleDateString("pt-BR") : "Aguardando aprovação";
+  }
 
   function imprimir() {
     window.print();
@@ -2358,7 +2372,7 @@ function OrcamentoImprimivel({ orcamento, paciente, onClose }) {
             </div>
 
             <div className="quebra-evitar" style={{ textAlign: "center", fontSize: 16, fontWeight: 700, color: "#1B3A5C", marginBottom: 20, letterSpacing: 1 }}>
-              ORÇAMENTO ODONTOLÓGICO
+              {relatorioAprovacao ? "RELATÓRIO DE APROVAÇÃO" : "ORÇAMENTO ODONTOLÓGICO"}
             </div>
 
             {/* Dados do paciente e orçamento */}
@@ -2379,6 +2393,8 @@ function OrcamentoImprimivel({ orcamento, paciente, onClose }) {
                   <th style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontSize: 12 }}>Cód.</th>
                   <th style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontSize: 12 }}>Procedimento</th>
                   <th style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontSize: 12 }}>Dente(s)</th>
+                  {!relatorioAprovacao && <th style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontSize: 12 }}>Status</th>}
+                  {!relatorioAprovacao && <th style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontSize: 12 }}>Data da aprovação</th>}
                   <th style={{ padding: "8px 10px", textAlign: "right", color: "#fff", fontSize: 12 }}>Valor</th>
                 </tr>
               </thead>
@@ -2388,6 +2404,8 @@ function OrcamentoImprimivel({ orcamento, paciente, onClose }) {
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "#555" }}>{it.cod}</td>
                     <td style={{ padding: "8px 10px", fontSize: 13 }}>{it.proc}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "#555" }}>{it.dentes?.join(", ") || "—"}</td>
+                    {!relatorioAprovacao && <td style={{ padding: "8px 10px", fontSize: 11, fontWeight: 700, color: statusDoItem(it) === "aprovado" ? C.green : C.amber }}>{statusDoItem(it) === "aprovado" ? "APROVADO" : "PENDENTE"}</td>}
+                    {!relatorioAprovacao && <td style={{ padding: "8px 10px", fontSize: 11, color: statusDoItem(it) === "aprovado" ? "#555" : C.amber }}>{dataAprovacaoDoItem(it, i)}</td>}
                     <td style={{ padding: "8px 10px", fontSize: 13, textAlign: "right", fontWeight: 600 }}>{fmt(it.valor)}</td>
                   </tr>
                 ))}
@@ -3225,6 +3243,8 @@ function Orcamentos({ state, dispatch }) {
                   <strong style={{ color: C.green }}>{fmt(aprovacao.valor)}</strong>
                   <Btn variant="ghost" style={{ padding: "3px 7px", fontSize: 10 }} onClick={() => setVisualizando({
                     ...orc,
+                    _tipoRelatorio: "aprovacao",
+                    _aprovacaoData: aprovacao.dataHora,
                     id: `${orc.id} / Aprovação ${indice + 1}`,
                     data: aprovacao.dataHora?.slice(0, 10) || orc.data,
                     itens: aprovacao.itens || [],
