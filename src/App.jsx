@@ -49,7 +49,17 @@ const initialState = {
 function reducer(state, action) {
   switch (action.type) {
     case "LOAD_PACIENTES": {
-      return { ...state, pacientes: action.payload };
+      const pacientes = [...action.payload].sort((a, b) => a.ficha - b.ficha);
+      const maiorFicha = pacientes.reduce((maior, p) => Math.max(maior, Number(p.ficha) || 0), 0);
+      return { ...state, pacientes, nextFicha: maiorFicha + 1 };
+    }
+    case "ADD_PACIENTE_PERSISTED": {
+      const pacientes = [...state.pacientes, action.payload].sort((a, b) => a.ficha - b.ficha);
+      return {
+        ...state,
+        pacientes,
+        nextFicha: Math.max(state.nextFicha, Number(action.payload.ficha) + 1),
+      };
     }
     case "REPLACE_PACIENTE_ID": {
       const { localId, supabaseId } = action.payload;
@@ -1148,11 +1158,13 @@ function Pacientes({ state, dispatch }) {
   const [erros, setErros] = useState({});
   const [fichaSel, setFichaSel] = useState(null); // paciente cuja ficha está aberta
 
-  const lista = useMemo(() => state.pacientes.filter(p =>
-    p.nome.toLowerCase().includes(busca.toLowerCase()) ||
-    p.cpf.includes(busca) ||
-    String(p.ficha).includes(busca)
-  ), [state.pacientes, busca]);
+  const lista = useMemo(() => state.pacientes
+    .filter(p =>
+      p.nome.toLowerCase().includes(busca.toLowerCase()) ||
+      p.cpf.includes(busca) ||
+      String(p.ficha).includes(busca)
+    )
+    .sort((a, b) => a.ficha - b.ficha), [state.pacientes, busca]);
 
   function abrirNovo() { setForm(emptyForm()); setModal("novo"); setErros({}); setCepStatus(null); }
   function abrirEditar(p) { setForm({ ...p, endereco: { ...p.endereco } }); setModal("editar"); setErros({}); setCepStatus(null); }
@@ -5572,16 +5584,46 @@ function TelaLogin({ onLogin }) {
 
 // ── Interceptador de dispatch para persistir pacientes no Supabase ──
 // Retorna um dispatch wrapper que intercepta ADD_PACIENTE e DELETE_PACIENTE
+function pacienteFromRow(p) {
+  return {
+    id: p.id,
+    _supabaseId: p.id,
+    ficha: p.ficha,
+    nome: p.nome,
+    nomeSocial: p.nome_social || false,
+    nomeCivil: p.nome_civil || "",
+    dataNasc: p.data_nasc || "",
+    cpf: p.cpf || "",
+    rg: p.rg || "",
+    telefone: p.telefone || "",
+    email: p.email_paciente || "",
+    responsavel: p.responsavel || "",
+    obs: p.obs || "",
+    endereco: {
+      rua: p.rua || "",
+      numero: p.numero || "",
+      complemento: p.complemento || "",
+      bairro: p.bairro || "",
+      cep: p.cep || "",
+      cidade: p.cidade || "",
+      estado: p.estado || "",
+    },
+  };
+}
+
 function useSupabaseDispatch(dispatch, session, pacientesRef) {
   return useCallback((action) => {
     async function run() {
       if (action.type === "ADD_PACIENTE") {
         const payload = action.payload;
-        // 1. Dispatch local imediato (gera ID numérico local)
-        dispatch(action);
-        // 2. Inserir no Supabase
+        // Aguarda o banco gerar o UUID e a ficha sequencial.
+        const proximaFicha = pacientesRef.current.reduce(
+          (maior, paciente) => Math.max(maior, Number(paciente.ficha) || 0),
+          0
+        ) + 1;
         const { data, error } = await supabase.from("pacientes").insert({
           user_id: session.user.id,
+          ficha: proximaFicha,
           nome: payload.nome,
           nome_social: payload.nomeSocial || false,
           nome_civil: payload.nomeCivil || "",
@@ -5600,9 +5642,12 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
           cidade: payload.endereco?.cidade || "",
           estado: payload.endereco?.estado || "",
         }).select().single();
-        if (error) { console.error("Erro ao salvar paciente no Supabase:", error); return; }
-        // 3. Atualizar: trocar ID local pelo UUID do Supabase
-        dispatch({ type: "REPLACE_PACIENTE_ID", payload: { localId: payload.id || pacientesRef.current.length, supabaseId: data.id } });
+        if (error) {
+          console.error("Erro ao salvar paciente no Supabase:", error);
+          window.alert(`Não foi possível salvar o paciente: ${error.message}`);
+          return;
+        }
+        dispatch({ type: "ADD_PACIENTE_PERSISTED", payload: pacienteFromRow(data) });
       } else if (action.type === "DELETE_PACIENTE") {
         const pacienteId = action.payload;
         const paciente = pacientesRef.current.find(p => p.id === pacienteId);
@@ -5656,27 +5701,9 @@ export default function App() {
         .from("pacientes")
         .select("*")
         .eq("user_id", session.user.id)
-        .order("created_at", { ascending: true });
+        .order("ficha", { ascending: true });
       if (error) { console.error("Erro ao carregar pacientes:", error); return; }
-      if (data && data.length > 0) {
-        const mapped = data.map(p => ({
-          id: p.id,
-          _supabaseId: p.id,
-          ficha: p.ficha || 1,
-          nome: p.nome,
-          nomeSocial: p.nome_social || false,
-          nomeCivil: p.nome_civil || "",
-          dataNasc: p.data_nasc || "",
-          cpf: p.cpf || "",
-          rg: p.rg || "",
-          telefone: p.telefone || "",
-          email: p.email_paciente || "",
-          responsavel: p.responsavel || "",
-          obs: p.obs || "",
-          endereco: { rua: p.rua || "", numero: p.numero || "", complemento: p.complemento || "", bairro: p.bairro || "", cep: p.cep || "", cidade: p.cidade || "", estado: p.estado || "" },
-        }));
-        dispatch({ type: "LOAD_PACIENTES", payload: mapped });
-      }
+      dispatch({ type: "LOAD_PACIENTES", payload: (data || []).map(pacienteFromRow) });
       setPacientesLoaded(true);
     }
     load();
