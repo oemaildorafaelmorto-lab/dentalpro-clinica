@@ -289,6 +289,10 @@ function reducer(state, action) {
     }
     case "LOAD_PERIOGRAMAS":
       return { ...state, periogramas: action.payload };
+    case "LOAD_ODONTOGRAMAS":
+      return { ...state, odontogramas: action.payload };
+    case "LOAD_APP_STATE":
+      return { ...state, ...action.payload };
     case "UPDATE_PERIOGRAMA_DENTE": {
       const { pacienteId, dente, dados } = action.payload;
       const atual = state.periogramas[pacienteId] || {};
@@ -5481,18 +5485,19 @@ function Odontograma({ state, dispatch }) {
     setModalDente({ dente });
   }
 
-  function salvarDente() {
+  async function salvarDente() {
+    let ok;
     if (statusEdit === "higido" && !obsEdit.trim()) {
-      dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
+      ok = await dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
     } else {
-      dispatch({ type: "UPDATE_ODONTOGRAMA", payload: { pacienteId: pacSel, dente: modalDente.dente, dados: { status: statusEdit, obs: obsEdit } } });
+      ok = await dispatch({ type: "UPDATE_ODONTOGRAMA", payload: { pacienteId: pacSel, dente: modalDente.dente, dados: { status: statusEdit, obs: obsEdit } } });
     }
-    setModalDente(null);
+    if (ok !== false) setModalDente(null);
   }
 
-  function limparDente() {
-    dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
-    setModalDente(null);
+  async function limparDente() {
+    const ok = await dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
+    if (ok !== false) setModalDente(null);
   }
 
   const DENTES = modo === "permanente" ? DENTES_PERM : DENTES_DEC;
@@ -6067,6 +6072,21 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         if (error) { window.alert(`Não foi possível excluir o registro clínico: ${error.message}`); return false; }
         dispatch({ type: "DELETE_HISTORICO_PERSISTED", payload: action.payload });
         return true;
+      } else if (action.type === "UPDATE_ODONTOGRAMA") {
+        const { pacienteId, dente, dados } = action.payload;
+        const { error } = await supabase.from("odontogramas").upsert({
+          user_id: session.user.id, paciente_id: pacienteId, dente,
+          status: dados.status, obs: dados.obs || "", updated_at: new Date().toISOString(),
+        }, { onConflict: "paciente_id,dente" });
+        if (error) { window.alert(`Não foi possível salvar o odontograma: ${error.message}`); return false; }
+        dispatch(action);
+        return true;
+      } else if (action.type === "CLEAR_ODONTOGRAMA_DENTE") {
+        const { pacienteId, dente } = action.payload;
+        const { error } = await supabase.from("odontogramas").delete().eq("paciente_id", pacienteId).eq("dente", dente);
+        if (error) { window.alert(`Não foi possível limpar o odontograma: ${error.message}`); return false; }
+        dispatch(action);
+        return true;
       } else if (action.type === "UPDATE_PERIOGRAMA_DENTE") {
         const { pacienteId, dente, dados } = action.payload;
         const { error } = await supabase.from("periogramas").upsert({
@@ -6137,6 +6157,7 @@ export default function App() {
   const [avisoImport, setAvisoImport] = useState(null);
   const [usuarioAtivo, setUsuarioAtivo] = useState(null);
   const [pacientesLoaded, setPacientesLoaded] = useState(false);
+  const [appStateLoaded, setAppStateLoaded] = useState(false);
   const inputImportRef = useRef(null);
   const pacientesRef = useRef(state.pacientes);
   const dbDispatch = useSupabaseDispatch(dispatch, session, pacientesRef);
@@ -6230,9 +6251,57 @@ export default function App() {
     loadPeriogramas();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    async function loadOdontogramas() {
+      const { data, error } = await supabase.from("odontogramas").select("*").eq("user_id", session.user.id);
+      if (error) { console.error("Erro ao carregar odontogramas:", error); return; }
+      const porPaciente = {};
+      (data || []).forEach(r => {
+        if (!porPaciente[r.paciente_id]) porPaciente[r.paciente_id] = {};
+        porPaciente[r.paciente_id][r.dente] = { status: r.status, obs: r.obs || "" };
+      });
+      dispatch({ type: "LOAD_ODONTOGRAMAS", payload: porPaciente });
+    }
+    loadOdontogramas();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    async function loadAppState() {
+      const { data, error } = await supabase.from("estado_app").select("dados").eq("user_id", session.user.id).maybeSingle();
+      if (error) console.error("Erro ao carregar estado geral:", error);
+      if (data?.dados) dispatch({ type: "LOAD_APP_STATE", payload: data.dados });
+      setAppStateLoaded(true);
+    }
+    loadAppState();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !appStateLoaded) return;
+    const timer = setTimeout(async () => {
+      const dados = {
+        baixas: state.baixas, pagamentos: state.pagamentos, caixa: state.caixa,
+        contasPagar: state.contasPagar, convenios: state.convenios,
+        recebimentosConvenio: state.recebimentosConvenio,
+        dentistasCadastrados: state.dentistasCadastrados, usuarios: state.usuarios,
+        nextId: state.nextId, nextFichaDentista: state.nextFichaDentista,
+      };
+      const { error } = await supabase.from("estado_app").upsert({
+        user_id: session.user.id, dados, updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+      if (error) console.error("Erro ao salvar estado geral:", error);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [
+    session, appStateLoaded, state.baixas, state.pagamentos, state.caixa,
+    state.contasPagar, state.convenios, state.recebimentosConvenio,
+    state.dentistasCadastrados, state.usuarios, state.nextId, state.nextFichaDentista,
+  ]);
+
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
