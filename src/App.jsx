@@ -232,6 +232,8 @@ function reducer(state, action) {
         ...state,
         orcamentos: state.orcamentos.map(o => o.id === action.payload.id ? action.payload : o),
       };
+    case "DELETE_ORCAMENTO_PERSISTED":
+      return { ...state, orcamentos: state.orcamentos.filter(o => o.id !== action.payload) };
     case "APROVAR_ORCAMENTO": {
       const id = action.payload?.id ?? action.payload;
       return { ...state, orcamentos: state.orcamentos.map(o => o.id === id ? { ...o, status: action.payload?.status || "aprovado", itens: action.payload?.itens || o.itens } : o) };
@@ -3073,6 +3075,7 @@ function Orcamentos({ state, dispatch }) {
   }
 
   const total = (orc) => orc.itens.reduce((s, i) => s + i.valor, 0);
+  const dataHoraBr = (valor) => valor ? new Date(valor).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Data não informada";
   const totalForm = itens.reduce((s, i) => {
     const qtd = i.dentes?.length || 1;
     return s + (Number(i.valorEditado) || 0) * qtd;
@@ -3102,8 +3105,28 @@ function Orcamentos({ state, dispatch }) {
       ? { ...item, status: "aprovado", aprovadoEm: agora }
       : { ...item, status: item.status || "pendente" });
     const status = itens.every(item => item.status === "aprovado") ? "aprovado" : "parcialmente_aprovado";
-    const ok = await dispatch({ type: "APROVAR_ORCAMENTO", payload: { id: aprovando.orc.id, itens, status } });
+    const evento = {
+      id: `${aprovando.orc.id}-${agora}`,
+      dataHora: agora,
+      valor: aprovando.orc.itens.reduce((s, item, indice) => s + (aprovando.selecionados.includes(indice) ? Number(item.valor) || 0 : 0), 0),
+      itens: aprovando.orc.itens
+        .map((item, indice) => aprovando.selecionados.includes(indice) ? { indice, cod: item.cod, proc: item.proc, dentes: item.dentes || [], valor: item.valor } : null)
+        .filter(Boolean),
+    };
+    const aprovacoes = [...(aprovando.orc.aprovacoes || []), evento];
+    const ok = await dispatch({ type: "APROVAR_ORCAMENTO", payload: { id: aprovando.orc.id, itens, status, aprovacoes } });
     if (ok !== false) setAprovando(null);
+  }
+
+  async function excluirOrcamento(orc) {
+    const baixas = state.baixas.filter(b => String(b.orcamentoId) === String(orc.id));
+    const temPagamento = baixas.some(b => state.pagamentos.some(p => String(p.baixaId) === String(b.id)));
+    if (baixas.length || temPagamento) {
+      window.alert("Este orçamento possui procedimento realizado ou pagamento vinculado e não pode ser excluído sem romper o histórico financeiro.");
+      return;
+    }
+    if (!window.confirm(`Excluir definitivamente este orçamento de ${fmt(total(orc))}? Esta ação não pode ser desfeita.`)) return;
+    await dispatch({ type: "DELETE_ORCAMENTO", payload: orc.id });
   }
 
   // Filtra e ordena a lista de orçamentos
@@ -3165,6 +3188,7 @@ function Orcamentos({ state, dispatch }) {
             </div>
             <Badge color={statusColor[orc.status]}>{statusLabel[orc.status] || orc.status.toUpperCase()}</Badge>
             <Btn variant="ghost" onClick={() => setVisualizando(orc)}>🖨 Visualizar</Btn>
+            <Btn variant="danger" onClick={() => excluirOrcamento(orc)}>Excluir</Btn>
             {(orc.status === "pendente" || orc.status === "parcialmente_aprovado") && (
               <Btn variant="green" onClick={() => abrirAprovacao(orc)}>
                 ✓ Aprovar procedimentos
@@ -3191,6 +3215,29 @@ function Orcamentos({ state, dispatch }) {
             );
           })}
         </div>
+        {!!orc.aprovacoes?.length && <div style={{ marginTop: 12, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 7 }}>HISTÓRICO DE APROVAÇÕES</div>
+          <div style={{ display: "grid", gap: 7 }}>
+            {orc.aprovacoes.map((aprovacao, indice) => <div key={aprovacao.id || indice} style={{ background: C.greenLight, borderLeft: `4px solid ${C.green}`, borderRadius: 7, padding: "8px 10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <strong style={{ color: C.green }}>Aprovação #{indice + 1} · {dataHoraBr(aprovacao.dataHora)}</strong>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <strong style={{ color: C.green }}>{fmt(aprovacao.valor)}</strong>
+                  <Btn variant="ghost" style={{ padding: "3px 7px", fontSize: 10 }} onClick={() => setVisualizando({
+                    ...orc,
+                    id: `${orc.id} / Aprovação ${indice + 1}`,
+                    data: aprovacao.dataHora?.slice(0, 10) || orc.data,
+                    itens: aprovacao.itens || [],
+                  })}>🖨 Relatório</Btn>
+                </div>
+              </div>
+              <div style={{ color: C.text, fontSize: 11, marginTop: 4 }}>
+                {(aprovacao.itens || []).map(item => `${item.proc}${item.dentes?.length ? ` (dentes ${item.dentes.join(", ")})` : ""} — ${fmt(item.valor)}`).join(" · ")}
+              </div>
+              {aprovacao.legado && <div style={{ color: C.muted, fontSize: 10, marginTop: 3 }}>Registro reconstruído a partir do histórico anterior.</div>}
+            </div>)}
+          </div>
+        </div>}
       </Card>
     );
   }
@@ -6461,6 +6508,17 @@ function orcamentoFromRow(o) {
   const itens = Array.isArray(o.itens)
     ? o.itens.map(item => ({ ...item, status: item.status || (o.status === "aprovado" ? "aprovado" : "pendente") }))
     : [];
+  let aprovacoes = Array.isArray(o.aprovacoes) ? o.aprovacoes : [];
+  if (!aprovacoes.length) {
+    const porMomento = {};
+    itens.filter(item => item.status === "aprovado").forEach((item, indice) => {
+      const momento = item.aprovadoEm || o.updated_at || o.created_at;
+      if (!porMomento[momento]) porMomento[momento] = { id: momento, dataHora: momento, itens: [], valor: 0, legado: !item.aprovadoEm };
+      porMomento[momento].itens.push({ indice, cod: item.cod, proc: item.proc, dentes: item.dentes || [], valor: item.valor });
+      porMomento[momento].valor += Number(item.valor) || 0;
+    });
+    aprovacoes = Object.values(porMomento).sort((a, b) => a.dataHora.localeCompare(b.dataHora));
+  }
   return {
     id: o.id,
     pacienteId: o.paciente_id,
@@ -6477,6 +6535,7 @@ function orcamentoFromRow(o) {
     periogramaVersaoTitulo: o.periograma_versao_titulo || null,
     periogramaVersaoData: o.periograma_versao_data || null,
     itens,
+    aprovacoes,
     status: o.status,
     createdAt: o.created_at,
   };
@@ -6589,10 +6648,15 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
       } else if (action.type === "APROVAR_ORCAMENTO") {
         const payload = action.payload;
         const { data, error } = await supabase.from("orcamentos")
-          .update({ status: payload.status || "aprovado", itens: payload.itens, updated_at: new Date().toISOString() })
+          .update({ status: payload.status || "aprovado", itens: payload.itens, aprovacoes: payload.aprovacoes || [], updated_at: new Date().toISOString() })
           .eq("id", payload.id).select().single();
         if (error) { window.alert(`Não foi possível aprovar o orçamento: ${error.message}`); return false; }
         dispatch({ type: "APROVAR_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
+        return true;
+      } else if (action.type === "DELETE_ORCAMENTO") {
+        const { error } = await supabase.from("orcamentos").delete().eq("id", action.payload);
+        if (error) { window.alert(`Não foi possível excluir o orçamento: ${error.message}`); return false; }
+        dispatch({ type: "DELETE_ORCAMENTO_PERSISTED", payload: action.payload });
         return true;
       } else if (action.type === "ADD_HISTORICO") {
         const h = action.payload;
@@ -6935,7 +6999,7 @@ export default function App() {
 
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "DELETE_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO", "DELETE_PERIOGRAMA_VERSAO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "DELETE_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "DELETE_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO", "DELETE_PERIOGRAMA_VERSAO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);

@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE orcamentos
+  ADD COLUMN IF NOT EXISTS aprovacoes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+COMMIT;
