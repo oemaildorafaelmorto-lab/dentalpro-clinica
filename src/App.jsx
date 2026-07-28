@@ -159,6 +159,17 @@ function reducer(state, action) {
       const h = { ...action.payload, id: state.nextId.hist };
       return { ...state, historicoClinico: [...state.historicoClinico, h], nextId: { ...state.nextId, hist: state.nextId.hist + 1 } };
     }
+    case "LOAD_HISTORICO":
+      return { ...state, historicoClinico: action.payload };
+    case "ADD_HISTORICO_PERSISTED":
+      return { ...state, historicoClinico: [...state.historicoClinico, action.payload] };
+    case "UPDATE_HISTORICO_PERSISTED":
+      return {
+        ...state,
+        historicoClinico: state.historicoClinico.map(h => h.id === action.payload.id ? action.payload : h),
+      };
+    case "DELETE_HISTORICO_PERSISTED":
+      return { ...state, historicoClinico: state.historicoClinico.filter(h => h.id !== action.payload) };
     case "UPDATE_HISTORICO": {
       return { ...state, historicoClinico: state.historicoClinico.map(h => h.id === action.payload.id ? action.payload : h) };
     }
@@ -2712,7 +2723,7 @@ function Impressos({ state }) {
   const [visualizando, setVisualizando] = useState(false);
   const [textoEditado, setTextoEditado] = useState(null); // permite ajustar o texto antes de imprimir
 
-  const paciente = state.pacientes.find(p => p.id === Number(pacSel));
+  const paciente = state.pacientes.find(p => String(p.id) === String(pacSel));
   const modelo = MODELOS_IMPRESSO[modeloSel];
   const ehReceituario = modeloSel === "receituario";
 
@@ -3322,15 +3333,15 @@ function Pagamentos({ state, dispatch }) {
       .filter(p => p.totalRealizado > 0); // só mostra quem já tem algo realizado
   }, [state.pacientes, state.baixas, state.pagamentos]);
 
-  const paciente = state.pacientes.find(p => p.id === Number(pacSel));
-  const saldoInfo = pacSel ? calcularSaldoPaciente(state, Number(pacSel)) : null;
+  const paciente = state.pacientes.find(p => String(p.id) === String(pacSel));
+  const saldoInfo = pacSel ? calcularSaldoPaciente(state, pacSel) : null;
   const credito = saldoInfo && saldoInfo.saldo < 0 ? Math.abs(saldoInfo.saldo) : 0;
 
   // Baixas (procedimentos realizados) deste paciente, com quanto já foi pago de cada uma
   const baixasDoPaciente = useMemo(() => {
     if (!pacSel) return [];
     return state.baixas
-      .filter(b => b.pacienteId === Number(pacSel))
+      .filter(b => String(b.pacienteId) === String(pacSel))
       .map(b => {
         const pagoNela = state.pagamentos
           .filter(p => p.baixaId === b.id)
@@ -3341,7 +3352,7 @@ function Pagamentos({ state, dispatch }) {
 
   const historicoPagamentos = useMemo(() => {
     if (!pacSel) return [];
-    return state.pagamentos.filter(p => p.pacienteId === Number(pacSel)).sort((a,b) => b.data.localeCompare(a.data));
+    return state.pagamentos.filter(p => String(p.pacienteId) === String(pacSel)).sort((a,b) => b.data.localeCompare(a.data));
   }, [pacSel, state.pagamentos]);
 
   function abrirNovoPagamento() {
@@ -3363,7 +3374,7 @@ function Pagamentos({ state, dispatch }) {
     dispatch({
       type: "ADD_PAGAMENTO",
       payload: {
-        pacienteId: Number(pacSel),
+        pacienteId: pacSel,
         data: form.data,
         valor: Number(form.valor),
         forma: form.forma,
@@ -3396,7 +3407,7 @@ function Pagamentos({ state, dispatch }) {
     dispatch({
       type: "VINCULAR_CREDITO",
       payload: {
-        pacienteId: Number(pacSel),
+        pacienteId: pacSel,
         baixaId: Number(creditoBaixaSel),
         valor,
       }
@@ -5085,17 +5096,22 @@ const TIPOS_ENTRADA = [
   { k: "anotacao",   label: "Anotação",           cor: C.muted,  icone: "💬" },
 ];
 
-function HistoricoClinico({ state, dispatch }) {
+function HistoricoClinico({ state, dispatch, onCriarOrcamento }) {
   const [pacSel, setPacSel] = useState("");
   const [modal, setModal] = useState(null); // null | "novo" | entrada
   const [form, setForm] = useState({ tipo: "consulta", data: today(), dentista: "", texto: "", baixaIds: [] });
+  const [formInicial, setFormInicial] = useState(form);
   const [erros, setErros] = useState({});
+  const [salvando, setSalvando] = useState(false);
 
-  const paciente = state.pacientes.find(p => p.id === Number(pacSel));
+  const paciente = state.pacientes.find(p => String(p.id) === String(pacSel));
+  const temOrcamentoAprovado = state.orcamentos.some(
+    o => String(o.pacienteId) === String(pacSel) && o.status === "aprovado"
+  );
 
   const historicoPac = useMemo(() =>
     state.historicoClinico
-      .filter(h => h.pacienteId === Number(pacSel))
+      .filter(h => String(h.pacienteId) === String(pacSel))
       .sort((a, b) => b.data.localeCompare(a.data)),
     [state.historicoClinico, pacSel]
   );
@@ -5105,7 +5121,7 @@ function HistoricoClinico({ state, dispatch }) {
     if (!pacSel) return {};
     const map = {};
     state.baixas
-      .filter(b => b.pacienteId === Number(pacSel))
+      .filter(b => String(b.pacienteId) === String(pacSel))
       .forEach(b => {
         if (!map[b.data]) map[b.data] = [];
         map[b.data].push(b);
@@ -5114,27 +5130,47 @@ function HistoricoClinico({ state, dispatch }) {
   }, [pacSel, state.baixas]);
 
   function abrirNovo() {
-    setForm({ tipo: "consulta", data: today(), dentista: "", texto: "", baixaIds: [] });
+    const inicial = { tipo: "consulta", data: today(), dentista: "", texto: "", baixaIds: [] };
+    setForm(inicial);
+    setFormInicial(inicial);
     setErros({});
     setModal("novo");
   }
 
   function abrirEditar(h) {
-    setForm({ ...h });
+    const inicial = { ...h, baixaIds: [...(h.baixaIds || [])] };
+    setForm(inicial);
+    setFormInicial(inicial);
     setErros({});
     setModal("editar");
   }
 
-  function salvar() {
+  function tentarFechar() {
+    if (JSON.stringify(form) !== JSON.stringify(formInicial)
+      && !window.confirm("Existem dados clínicos não salvos. Deseja sair e descartar as alterações?")) return;
+    setModal(null);
+  }
+
+  function irParaOrcamentos() {
+    if (JSON.stringify(form) !== JSON.stringify(formInicial)
+      && !window.confirm("Existem dados clínicos não salvos. Deseja descartá-los e ir para Orçamentos?")) return;
+    setModal(null);
+    onCriarOrcamento();
+  }
+
+  async function salvar() {
     const e = {};
     if (!form.texto.trim()) e.texto = "Descrição obrigatória";
     if (!form.data) e.data = "Data obrigatória";
     if (Object.keys(e).length > 0) { setErros(e); return; }
 
-    const payload = { ...form, pacienteId: Number(pacSel) };
-    if (modal === "novo") dispatch({ type: "ADD_HISTORICO", payload });
-    else dispatch({ type: "UPDATE_HISTORICO", payload });
-    setModal(null);
+    const payload = { ...form, pacienteId: pacSel };
+    setSalvando(true);
+    const ok = modal === "novo"
+      ? await dispatch({ type: "ADD_HISTORICO", payload })
+      : await dispatch({ type: "UPDATE_HISTORICO", payload });
+    setSalvando(false);
+    if (ok !== false) setModal(null);
   }
 
   function toggleBaixaId(id) {
@@ -5254,7 +5290,7 @@ function HistoricoClinico({ state, dispatch }) {
 
       {/* Modal de nova entrada / edição */}
       {modal && (
-        <Modal title={modal === "novo" ? "Nova Entrada no Histórico" : "Editar Entrada"} onClose={() => setModal(null)}>
+        <Modal title={modal === "novo" ? "Nova Entrada no Histórico" : "Editar Entrada"} onClose={tentarFechar}>
           <div style={{ display: "grid", gap: 14 }}>
 
             {/* Tipo de entrada */}
@@ -5299,6 +5335,15 @@ function HistoricoClinico({ state, dispatch }) {
               />
             </Campo>
 
+            {!temOrcamentoAprovado && (
+              <div style={{ background: C.amberLight, color: C.amber, borderRadius: 8, padding: "10px 12px", fontSize: 12 }}>
+                Este registro clínico pode ser salvo normalmente sem orçamento. Para registrar um procedimento realizado e movimentar o financeiro, crie e aprove primeiro um orçamento para este paciente.
+                <div style={{ marginTop: 8 }}>
+                  <Btn variant="ghost" onClick={irParaOrcamentos}>Ir para Orçamentos</Btn>
+                </div>
+              </div>
+            )}
+
             {/* Vincular procedimentos realizados na mesma data */}
             {baixasNaData.length > 0 && (
               <div>
@@ -5324,8 +5369,8 @@ function HistoricoClinico({ state, dispatch }) {
             )}
 
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-              <Btn onClick={salvar}>Salvar</Btn>
+              <Btn variant="ghost" onClick={tentarFechar}>Cancelar</Btn>
+              <Btn onClick={salvar} disabled={salvando}>{salvando ? "Salvando..." : "Salvar"}</Btn>
             </div>
           </div>
         </Modal>
@@ -5411,8 +5456,8 @@ function Odontograma({ state, dispatch }) {
   const [obsEdit, setObsEdit] = useState("");
   const [modo, setModo] = useState("permanente");
 
-  const paciente = state.pacientes.find(p => p.id === Number(pacSel));
-  const odo = pacSel ? (state.odontogramas[Number(pacSel)] || {}) : {};
+  const paciente = state.pacientes.find(p => String(p.id) === String(pacSel));
+  const odo = pacSel ? (state.odontogramas[pacSel] || {}) : {};
 
   function abrirDente(dente) {
     const dados = odo[dente];
@@ -5423,15 +5468,15 @@ function Odontograma({ state, dispatch }) {
 
   function salvarDente() {
     if (statusEdit === "higido" && !obsEdit.trim()) {
-      dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: Number(pacSel), dente: modalDente.dente } });
+      dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
     } else {
-      dispatch({ type: "UPDATE_ODONTOGRAMA", payload: { pacienteId: Number(pacSel), dente: modalDente.dente, dados: { status: statusEdit, obs: obsEdit } } });
+      dispatch({ type: "UPDATE_ODONTOGRAMA", payload: { pacienteId: pacSel, dente: modalDente.dente, dados: { status: statusEdit, obs: obsEdit } } });
     }
     setModalDente(null);
   }
 
   function limparDente() {
-    dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: Number(pacSel), dente: modalDente.dente } });
+    dispatch({ type: "CLEAR_ODONTOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } });
     setModalDente(null);
   }
 
@@ -5796,6 +5841,18 @@ function orcamentoFromRow(o) {
   };
 }
 
+function historicoFromRow(h) {
+  return {
+    id: h.id,
+    pacienteId: h.paciente_id,
+    tipo: h.tipo,
+    data: h.data,
+    dentista: h.dentista || "",
+    texto: h.texto,
+    baixaIds: Array.isArray(h.baixa_ids) ? h.baixa_ids : [],
+  };
+}
+
 function useSupabaseDispatch(dispatch, session, pacientesRef) {
   return useCallback((action) => {
     async function run() {
@@ -5869,6 +5926,29 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
           .eq("id", action.payload).select().single();
         if (error) { window.alert(`Não foi possível aprovar o orçamento: ${error.message}`); return false; }
         dispatch({ type: "APROVAR_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
+        return true;
+      } else if (action.type === "ADD_HISTORICO") {
+        const h = action.payload;
+        const { data, error } = await supabase.from("historico_clinico").insert({
+          user_id: session.user.id, paciente_id: h.pacienteId, tipo: h.tipo,
+          data: h.data, dentista: h.dentista || null, texto: h.texto, baixa_ids: h.baixaIds || [],
+        }).select().single();
+        if (error) { window.alert(`Não foi possível salvar o registro clínico: ${error.message}`); return false; }
+        dispatch({ type: "ADD_HISTORICO_PERSISTED", payload: historicoFromRow(data) });
+        return true;
+      } else if (action.type === "UPDATE_HISTORICO") {
+        const h = action.payload;
+        const { data, error } = await supabase.from("historico_clinico").update({
+          tipo: h.tipo, data: h.data, dentista: h.dentista || null,
+          texto: h.texto, baixa_ids: h.baixaIds || [], updated_at: new Date().toISOString(),
+        }).eq("id", h.id).select().single();
+        if (error) { window.alert(`Não foi possível atualizar o registro clínico: ${error.message}`); return false; }
+        dispatch({ type: "UPDATE_HISTORICO_PERSISTED", payload: historicoFromRow(data) });
+        return true;
+      } else if (action.type === "DELETE_HISTORICO") {
+        const { error } = await supabase.from("historico_clinico").delete().eq("id", action.payload);
+        if (error) { window.alert(`Não foi possível excluir o registro clínico: ${error.message}`); return false; }
+        dispatch({ type: "DELETE_HISTORICO_PERSISTED", payload: action.payload });
         return true;
       } else if (action.type === "ADD_TABELA_PRECO") {
         const p = action.payload;
@@ -5989,9 +6069,23 @@ export default function App() {
     loadOrcamentos();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    async function loadHistorico() {
+      const { data, error } = await supabase
+        .from("historico_clinico")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("data", { ascending: false });
+      if (error) { console.error("Erro ao carregar histórico clínico:", error); return; }
+      dispatch({ type: "LOAD_HISTORICO", payload: (data || []).map(historicoFromRow) });
+    }
+    loadHistorico();
+  }, [session]);
+
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
@@ -6176,7 +6270,7 @@ export default function App() {
         {tab === "convenios"        && <Convenios state={state} dispatch={patchedDispatch} />}
         {tab === "tabelasPreco"     && <TabelasPreco state={state} dispatch={patchedDispatch} />}
         {tab === "impressos"        && <Impressos state={state} />}
-        {tab === "historico"        && <HistoricoClinico state={state} dispatch={patchedDispatch} />}
+        {tab === "historico"        && <HistoricoClinico state={state} dispatch={patchedDispatch} onCriarOrcamento={() => irPara("orcamentos")} />}
         {tab === "odontograma"      && <Odontograma state={state} dispatch={patchedDispatch} />}
         {tab === "orcamentos"       && <Orcamentos state={state} dispatch={patchedDispatch} />}
         {tab === "baixas"           && <Baixas state={state} dispatch={patchedDispatch} />}
