@@ -7241,7 +7241,7 @@ export default function App() {
   }
 
   // ── Loading state ──
-  if (authLoading || (!!session && perfilLoading)) {
+  if (authLoading || (!!session && (perfilLoading || !usuarioAtivo))) {
     return (
       <div style={{ minHeight: "100vh", background: C.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
         <div style={{ textAlign: "center" }}>
