@@ -47,6 +47,7 @@ const initialState = {
   odontogramas: {},
   odontogramaVersoes: [],
   periogramas: {},
+  periogramaVersoes: [],
 };
 
 function reducer(state, action) {
@@ -107,6 +108,7 @@ function reducer(state, action) {
         odontogramas: dados.odontogramas || {},
         odontogramaVersoes: dados.odontogramaVersoes || [],
         periogramas: dados.periogramas || {},
+        periogramaVersoes: dados.periogramaVersoes || [],
       };
     }
     case "ADD_CONVENIO": {
@@ -291,6 +293,10 @@ function reducer(state, action) {
     }
     case "LOAD_PERIOGRAMAS":
       return { ...state, periogramas: action.payload };
+    case "LOAD_PERIOGRAMA_VERSOES":
+      return { ...state, periogramaVersoes: action.payload };
+    case "ADD_PERIOGRAMA_VERSAO_PERSISTED":
+      return { ...state, periogramaVersoes: [...state.periogramaVersoes, action.payload] };
     case "LOAD_ODONTOGRAMAS":
       return { ...state, odontogramas: action.payload };
     case "LOAD_ODONTOGRAMA_VERSOES":
@@ -5757,6 +5763,8 @@ function Periograma({ state, dispatch }) {
   const [modalDente, setModalDente] = useState(null);
   const [condicoes, setCondicoes] = useState([]);
   const [obs, setObs] = useState("");
+  const [modalVersao, setModalVersao] = useState(false);
+  const [versaoForm, setVersaoForm] = useState({ data: today(), titulo: "", obs: "" });
   const odo = pacSel ? (state.odontogramas[pacSel] || {}) : {};
   const perio = pacSel ? (state.periogramas[pacSel] || {}) : {};
   const DENTES = modo === "permanente" ? DENTES_PERM : DENTES_DEC;
@@ -5780,6 +5788,30 @@ function Periograma({ state, dispatch }) {
   }
 
   const registros = Object.entries(perio).filter(([, d]) => d.condicoes?.length || d.obs);
+  const versoesPaciente = state.periogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel))
+    .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  async function salvarVersao() {
+    if (!versaoForm.data || !versaoForm.titulo.trim()) {
+      window.alert("Informe a data e o título deste momento periodontal.");
+      return;
+    }
+    const ok = await dispatch({
+      type: "ADD_PERIOGRAMA_VERSAO",
+      payload: {
+        pacienteId: pacSel,
+        data: versaoForm.data,
+        titulo: versaoForm.titulo.trim(),
+        obs: versaoForm.obs.trim(),
+        dentes: JSON.parse(JSON.stringify(perio)),
+      },
+    });
+    if (ok !== false) {
+      setModalVersao(false);
+      setVersaoForm({ data: today(), titulo: "", obs: "" });
+    }
+  }
 
   return <div>
     <Card style={{ marginBottom: 14, display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -5791,6 +5823,7 @@ function Periograma({ state, dispatch }) {
         padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
         border: `2px solid ${modo === m ? C.teal : C.border}`, background: modo === m ? C.tealLight : C.white, color: modo === m ? C.teal : C.muted,
       }}>{m === "permanente" ? "Permanente" : "Decíduo"}</button>)}</div>
+      {pacSel && <Btn onClick={() => setModalVersao(true)}>+ Registrar momento periodontal</Btn>}
     </Card>
     {!pacSel && <div style={{ textAlign: "center", color: C.muted, padding: 60 }}>Selecione um paciente para visualizar o periograma.</div>}
     {pacSel && <>
@@ -5818,7 +5851,35 @@ function Periograma({ state, dispatch }) {
           <strong>Dente {dente}:</strong> {d.condicoes.map(c => CONDICOES_PERIO[c]?.label).join(", ")}{d.obs && ` — ${d.obs}`}
         </div>)}
       </Card>}
+      <Card style={{ marginTop: 14 }}>
+        <div style={{ fontWeight: 700, color: C.navy, marginBottom: 10 }}>📅 Evolução dos periogramas</div>
+        {!versoesPaciente.length && <div style={{ color: C.muted, fontSize: 13 }}>Nenhum momento periodontal registrado.</div>}
+        {versoesPaciente.map(v => {
+          const achados = Object.entries(v.dentes || {}).filter(([, d]) => d.condicoes?.length || d.obs);
+          return <div key={v.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong>
+              <span style={{ color: C.muted, fontSize: 11 }}>{achados.length} dente(s) com registro</span>
+            </div>
+            {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{v.obs}</div>}
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+              {achados.map(([dente, d]) => <span key={dente} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 7px", fontSize: 11 }}>
+                {dente}: {(d.condicoes || []).map(c => CONDICOES_PERIO[c]?.label).filter(Boolean).join(", ")}{d.obs ? ` — ${d.obs}` : ""}
+              </span>)}
+            </div>
+          </div>;
+        })}
+      </Card>
     </>}
+    {modalVersao && <Modal title="Registrar momento periodontal" onClose={() => setModalVersao(false)}>
+      <div style={{ display: "grid", gap: 12 }}>
+        <Input label="Data *" type="date" value={versaoForm.data} onChange={e => setVersaoForm(f => ({ ...f, data: e.target.value }))} />
+        <Input label="Título *" value={versaoForm.titulo} onChange={e => setVersaoForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Avaliação periodontal inicial..." />
+        <textarea value={versaoForm.obs} onChange={e => setVersaoForm(f => ({ ...f, obs: e.target.value }))} placeholder="Observações deste momento periodontal..." rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
+        <div style={{ background: C.tealLight, color: C.teal, borderRadius: 8, padding: 10, fontSize: 12 }}>Esta versão será imutável e preservará a condição periodontal desta data.</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalVersao(false)}>Cancelar</Btn><Btn onClick={salvarVersao}>Salvar versão</Btn></div>
+      </div>
+    </Modal>}
     {modalDente && <Modal title={`Periograma — Dente ${modalDente.dente}`} onClose={() => setModalDente(null)}>
       <div style={{ display: "grid", gap: 12 }}>
         <div style={{ background: C.bg, padding: 10, borderRadius: 8, fontSize: 12 }}>Estado odontológico: <strong>{STATUS_CLINICO[odo[modalDente.dente]?.status || "higido"].label}</strong> (somente leitura)</div>
@@ -6064,6 +6125,13 @@ function odontogramaVersaoFromRow(v) {
   };
 }
 
+function periogramaVersaoFromRow(v) {
+  return {
+    id: v.id, pacienteId: v.paciente_id, data: v.data, titulo: v.titulo,
+    obs: v.obs || "", dentes: v.dentes || {}, createdAt: v.created_at,
+  };
+}
+
 function useSupabaseDispatch(dispatch, session, pacientesRef) {
   return useCallback((action) => {
     async function run() {
@@ -6203,6 +6271,15 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         const { error } = await supabase.from("periogramas").delete().eq("paciente_id", pacienteId).eq("dente", dente);
         if (error) { window.alert(`Não foi possível limpar o periograma: ${error.message}`); return false; }
         dispatch(action);
+        return true;
+      } else if (action.type === "ADD_PERIOGRAMA_VERSAO") {
+        const v = action.payload;
+        const { data, error } = await supabase.from("periograma_versoes").insert({
+          user_id: session.user.id, paciente_id: v.pacienteId, data: v.data,
+          titulo: v.titulo, obs: v.obs, dentes: v.dentes,
+        }).select().single();
+        if (error) { window.alert(`Não foi possível salvar a versão do periograma: ${error.message}`); return false; }
+        dispatch({ type: "ADD_PERIOGRAMA_VERSAO_PERSISTED", payload: periogramaVersaoFromRow(data) });
         return true;
       } else if (action.type === "ADD_TABELA_PRECO") {
         const p = action.payload;
@@ -6355,6 +6432,17 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
+    async function loadPeriogramaVersoes() {
+      const { data, error } = await supabase.from("periograma_versoes")
+        .select("*").eq("user_id", session.user.id).order("data", { ascending: false });
+      if (error) { console.error("Erro ao carregar versões do periograma:", error); return; }
+      dispatch({ type: "LOAD_PERIOGRAMA_VERSOES", payload: (data || []).map(periogramaVersaoFromRow) });
+    }
+    loadPeriogramaVersoes();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     async function loadOdontogramas() {
       const { data, error } = await supabase.from("odontogramas").select("*").eq("user_id", session.user.id);
       if (error) { console.error("Erro ao carregar odontogramas:", error); return; }
@@ -6414,7 +6502,7 @@ export default function App() {
 
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
