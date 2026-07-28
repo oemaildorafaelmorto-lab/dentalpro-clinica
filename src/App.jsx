@@ -792,19 +792,21 @@ function Campo({ erro, children }) {
 }
 
 function Input({ label, ...props }) {
+  const required = props.required ?? !!label?.includes("*");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {label && <label style={{ fontSize: 12, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>}
-      <input {...props} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, color: C.text, outline: "none", background: props.disabled ? "#F0F4F7" : C.white, ...props.style }} />
+      <input {...props} required={required} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, color: C.text, outline: "none", background: props.disabled ? "#F0F4F7" : C.white, ...props.style }} />
     </div>
   );
 }
 
 function Select({ label, children, ...props }) {
+  const required = props.required ?? !!label?.includes("*");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {label && <label style={{ fontSize: 12, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</label>}
-      <select {...props} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, color: C.text, background: C.white, outline: "none", ...props.style }}>{children}</select>
+      <select {...props} required={required} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 14, color: C.text, background: C.white, outline: "none", ...props.style }}>{children}</select>
     </div>
   );
 }
@@ -1055,8 +1057,19 @@ function Modal({ title, onClose, children }) {
     onClose();
   }
 
+  function validarObrigatorios(event) {
+    const botao = event.target.closest("button");
+    if (!botao || !/salvar|cadastrar|registrar|criar|adicionar|confirmar/i.test(botao.textContent || "")) return;
+    const modal = event.currentTarget;
+    const primeiroInvalido = modal.querySelector("input[required]:invalid, select[required]:invalid, textarea[required]:invalid");
+    if (!primeiroInvalido) return;
+    event.preventDefault();
+    event.stopPropagation();
+    primeiroInvalido.reportValidity();
+  }
+
   return (
-    <div onInputCapture={() => setDirty(true)} onChangeCapture={() => setDirty(true)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
+    <div onClickCapture={validarObrigatorios} onInputCapture={() => setDirty(true)} onChangeCapture={() => setDirty(true)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 14, padding: 28, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h3 style={{ margin: 0, color: C.navy, fontSize: 18 }}>{title}</h3>
@@ -5827,6 +5840,8 @@ function Periograma({ state, dispatch }) {
   const odontogramaVersao = odontogramasPaciente.find(v => String(v.id) === String(odontogramaVersaoSel));
   const odo = odontogramaVersao?.dentes || {};
   const perio = rascunho || ultimaVersao?.dentes || {};
+  const podeIniciarPeriograma = !!pacSel && !!odontogramaVersao && !!divisao;
+  const podeSalvarVersao = !!rascunho && !!odontogramaVersao && !!versaoForm.data && !!versaoForm.titulo.trim();
   useUnsavedChanges("periograma-rascunho", !!rascunho, "Rascunho do periograma");
 
   useEffect(() => {
@@ -5973,17 +5988,23 @@ function Periograma({ state, dispatch }) {
         <option value="">Escolha um paciente…</option>
         {state.pacientes.map(p => <option key={p.id} value={p.id}>Ficha #{String(p.ficha).padStart(4, "0")} — {p.nome}</option>)}
       </Select>
-      {pacSel && <Select label="Odontograma clínico de referência *" value={odontogramaVersaoSel} onChange={e => trocarReferencia(e.target.value)}>
+      {pacSel && <Select disabled={!!rascunho} label="Odontograma clínico de referência *" value={odontogramaVersaoSel} onChange={e => trocarReferencia(e.target.value)}>
         <option value="">Nenhum odontograma clínico salvo</option>
         {odontogramasPaciente.map(v => <option key={v.id} value={v.id}>{v.data} — {v.titulo}</option>)}
       </Select>}
       {pacSel && !odontogramasPaciente.length && <div style={{ background: C.amberLight, color: C.amber, padding: 10, borderRadius: 8, fontSize: 12 }}>Não é possível criar um periograma sem um odontograma clínico salvo. Registre primeiro um momento no Odontograma.</div>}
       {pacSel && !!odontogramasPaciente.length && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        {["permanente", "deciduo"].map(tipo => <Btn key={tipo} variant={modo === tipo ? "primary" : "ghost"} onClick={() => { if (!rascunho || window.confirm("Trocar a dentição descartará o rascunho periodontal atual. Continuar?")) { setModo(tipo); setRascunho(null); } }}>{tipo === "permanente" ? "Permanente" : "Decíduo"}</Btn>)}
+        {["permanente", "deciduo"].map(tipo => <Btn disabled={!!rascunho} key={tipo} variant={modo === tipo ? "primary" : "ghost"} onClick={() => { setModo(tipo); setRascunho(null); }}>{tipo === "permanente" ? "Permanente" : "Decíduo"}</Btn>)}
         <span style={{ width: 1, height: 28, background: C.border }} />
         <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>Dividir a boca em:</span>
-        {["sextantes", "quadrantes"].map(tipo => <Btn key={tipo} variant={divisao === tipo ? "primary" : "ghost"} onClick={() => trocarDivisao(tipo)}>{tipo === "sextantes" ? "6 sextantes" : "4 quadrantes"}</Btn>)}
-        <div style={{ marginLeft: "auto" }}>{!rascunho ? <Btn onClick={iniciarNovo}>+ Novo periograma</Btn> : <><Btn variant="ghost" onClick={() => setRascunho(null)} style={{ marginRight: 8 }}>Cancelar rascunho</Btn><Btn onClick={() => setModalVersao(true)}>Salvar momento periodontal</Btn></>}</div>
+        {["sextantes", "quadrantes"].map(tipo => <Btn disabled={!!rascunho} key={tipo} variant={divisao === tipo ? "primary" : "ghost"} onClick={() => trocarDivisao(tipo)}>{tipo === "sextantes" ? "6 sextantes" : "4 quadrantes"}</Btn>)}
+        <div style={{ marginLeft: "auto" }}>{!rascunho ? <Btn disabled={!podeIniciarPeriograma} onClick={iniciarNovo}>+ Novo periograma</Btn> : <><Btn variant="ghost" onClick={() => { if (window.confirm("Descartar todo o rascunho deste periograma?")) setRascunho(null); }} style={{ marginRight: 8 }}>Cancelar rascunho</Btn><Btn onClick={() => setModalVersao(true)}>Salvar momento periodontal</Btn></>}</div>
+      </div>}
+      {pacSel && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
+        <span style={{ color: C.green }}>✓ Paciente selecionado</span>
+        <span style={{ color: odontogramaVersao ? C.green : C.red }}>{odontogramaVersao ? "✓" : "○"} Odontograma clínico salvo</span>
+        <span style={{ color: divisao ? C.green : C.red }}>{divisao ? "✓" : "○"} Divisão definida</span>
+        {!podeIniciarPeriograma && <strong style={{ color: C.red }}>Complete os requisitos acima para liberar “Novo periograma”.</strong>}
       </div>}
     </Card>
 
@@ -6028,7 +6049,8 @@ function Periograma({ state, dispatch }) {
         <Input label="Data *" type="date" value={versaoForm.data} onChange={e => setVersaoForm(f => ({ ...f, data: e.target.value }))} />
         <Input label="Título *" value={versaoForm.titulo} onChange={e => setVersaoForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Avaliação periodontal inicial..." />
         <textarea value={versaoForm.obs} onChange={e => setVersaoForm(f => ({ ...f, obs: e.target.value }))} placeholder="Observações deste momento periodontal..." rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalVersao(false)}>Cancelar</Btn><Btn onClick={salvarVersao}>Salvar versão</Btn></div>
+        {!podeSalvarVersao && <div style={{ background: C.amberLight, color: C.amber, padding: 9, borderRadius: 8, fontSize: 12 }}>Preencha a data e o título para liberar o salvamento. O rascunho permanecerá preservado.</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalVersao(false)}>Cancelar</Btn><Btn disabled={!podeSalvarVersao} onClick={salvarVersao}>Salvar versão</Btn></div>
       </div>
     </Modal>}
 
