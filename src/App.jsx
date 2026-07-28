@@ -45,6 +45,7 @@ const initialState = {
   nextFicha: 1,
   nextFichaDentista: 3,
   odontogramas: {},
+  odontogramaVersoes: [],
   periogramas: {},
 };
 
@@ -104,6 +105,7 @@ function reducer(state, action) {
         nextFicha: dados.nextFicha || 1,
         nextFichaDentista: dados.nextFichaDentista || 1,
         odontogramas: dados.odontogramas || {},
+        odontogramaVersoes: dados.odontogramaVersoes || [],
         periogramas: dados.periogramas || {},
       };
     }
@@ -291,6 +293,10 @@ function reducer(state, action) {
       return { ...state, periogramas: action.payload };
     case "LOAD_ODONTOGRAMAS":
       return { ...state, odontogramas: action.payload };
+    case "LOAD_ODONTOGRAMA_VERSOES":
+      return { ...state, odontogramaVersoes: action.payload };
+    case "ADD_ODONTOGRAMA_VERSAO_PERSISTED":
+      return { ...state, odontogramaVersoes: [...state.odontogramaVersoes, action.payload] };
     case "LOAD_APP_STATE":
       return { ...state, ...action.payload };
     case "UPDATE_PERIOGRAMA_DENTE": {
@@ -2841,6 +2847,7 @@ function Orcamentos({ state, dispatch }) {
   const [data, setData] = useState(today());
   const [dentista, setDentista] = useState("");
   const [tabelaSel, setTabelaSel] = useState("");
+  const [odontogramaVersaoSel, setOdontogramaVersaoSel] = useState("");
   const [itens, setItens] = useState([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   const [busca, setBusca] = useState("");
   const [erroSalvar, setErroSalvar] = useState(false);
@@ -2852,6 +2859,10 @@ function Orcamentos({ state, dispatch }) {
   const convenio = tabelaPreco?.convenioId
     ? state.convenios.find(c => String(c.id) === String(tabelaPreco.convenioId))
     : null;
+  const versoesOdontograma = state.odontogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel))
+    .sort((a, b) => b.data.localeCompare(a.data));
+  const odontogramaVersao = state.odontogramaVersoes.find(v => v.id === odontogramaVersaoSel);
 
   useEffect(() => {
     if (!tabelaSel && tabelasAtivas.length) {
@@ -2896,7 +2907,7 @@ function Orcamentos({ state, dispatch }) {
 
   async function salvar() {
     const semDentes = itens.some(it => !it.dentes || it.dentes.length === 0);
-    if (!pacSel || !dentista || !tabelaSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
+    if (!pacSel || !dentista || !tabelaSel || !odontogramaVersaoSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
     setErroSalvar(false);
     const ok = await dispatch({
       type: "ADD_ORCAMENTO",
@@ -2908,6 +2919,9 @@ function Orcamentos({ state, dispatch }) {
         convenioNome: convenio ? convenio.nome : null,
         tabelaPrecoId: tabelaPreco?.id || null,
         tabelaPrecoNome: tabelaPreco?.nome || null,
+        odontogramaVersaoId: odontogramaVersao?.id || null,
+        odontogramaVersaoTitulo: odontogramaVersao?.titulo || null,
+        odontogramaVersaoData: odontogramaVersao?.data || null,
         itens: itens.map(it => {
           const qtd = it.dentes?.length || 1;
           const valorUnit = Number(it.valorEditado) || it.valor;
@@ -2916,12 +2930,12 @@ function Orcamentos({ state, dispatch }) {
       }
     });
     if (ok === false) return;
-    setModal(false); setPacSel(""); setDentista(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
+    setModal(false); setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
   }
 
   function fecharModal() {
     setModal(false);
-    setPacSel(""); setDentista(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
+    setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   }
 
   const total = (orc) => orc.itens.reduce((s, i) => s + i.valor, 0);
@@ -2978,6 +2992,7 @@ function Orcamentos({ state, dispatch }) {
               {orc.convenioNome && <span style={{ marginLeft: 8 }}><Badge color="amber">{orc.convenioNome}</Badge></span>}
             </div>
             <div style={{ color: C.muted, fontSize: 13, marginTop: 2 }}>Emitido em {orc.data}{orc.dentista && <> · Dr(a). {orc.dentista}</>}</div>
+            {orc.odontogramaVersaoTitulo && <div style={{ color: C.teal, fontSize: 11, marginTop: 3 }}>Odontograma: {orc.odontogramaVersaoData} — {orc.odontogramaVersaoTitulo}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, color: C.teal, fontSize: 17 }}>{fmt(total(orc))}</span>
@@ -3054,12 +3069,22 @@ function Orcamentos({ state, dispatch }) {
         <Modal title="Novo Orçamento" onClose={fecharModal}>
           <div style={{ display: "grid", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Select label="Paciente *" value={pacSel} onChange={e => { setPacSel(e.target.value); setErroSalvar(false); }} style={erroSalvar && !pacSel ? { borderColor: C.red } : {}}>
+              <Select label="Paciente *" value={pacSel} onChange={e => { setPacSel(e.target.value); setOdontogramaVersaoSel(""); setErroSalvar(false); }} style={erroSalvar && !pacSel ? { borderColor: C.red } : {}}>
                 <option value="">Selecione…</option>
                 {state.pacientes.map(p => <option key={p.id} value={p.id}>Ficha #{String(p.ficha).padStart(4,"0")} — {p.nome}</option>)}
               </Select>
               <Input label="Data" type="date" value={data} onChange={e => setData(e.target.value)} />
             </div>
+
+            <Select label="Odontograma de referência *" value={odontogramaVersaoSel} onChange={e => { setOdontogramaVersaoSel(e.target.value); setErroSalvar(false); }} style={erroSalvar && !odontogramaVersaoSel ? { borderColor: C.red } : {}}>
+              <option value="">{pacSel ? "Selecione um momento clínico…" : "Selecione primeiro o paciente"}</option>
+              {versoesOdontograma.map(v => <option key={v.id} value={v.id}>{v.data} — {v.titulo}</option>)}
+            </Select>
+            {pacSel && !versoesOdontograma.length && (
+              <div style={{ background: C.amberLight, color: C.amber, borderRadius: 8, padding: "9px 12px", fontSize: 12 }}>
+                Este paciente ainda não possui uma versão de odontograma. Vá ao Odontograma e registre um momento clínico antes de criar o orçamento.
+              </div>
+            )}
 
             <Select label="Dentista responsável *" value={dentista} onChange={e => { setDentista(e.target.value); setErroSalvar(false); }} style={erroSalvar && !dentista ? { borderColor: C.red } : {}}>
               <option value="">Selecione o dentista…</option>
@@ -3150,7 +3175,7 @@ function Orcamentos({ state, dispatch }) {
 
             {erroSalvar && (
               <div style={{ background: C.redLight, color: C.red, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
-                Selecione o paciente, a tabela de preços, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
+                Selecione o paciente, o odontograma de referência, a tabela de preços, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
               </div>
             )}
 
@@ -5474,6 +5499,8 @@ function Odontograma({ state, dispatch }) {
   const [statusEdit, setStatusEdit] = useState("higido");
   const [obsEdit, setObsEdit] = useState("");
   const [modo, setModo] = useState("permanente");
+  const [modalVersao, setModalVersao] = useState(false);
+  const [versaoForm, setVersaoForm] = useState({ data: today(), titulo: "", obs: "" });
 
   const paciente = state.pacientes.find(p => String(p.id) === String(pacSel));
   const odo = pacSel ? (state.odontogramas[pacSel] || {}) : {};
@@ -5503,6 +5530,27 @@ function Odontograma({ state, dispatch }) {
   const DENTES = modo === "permanente" ? DENTES_PERM : DENTES_DEC;
   const dentesComRegistro = Object.entries(odo).filter(([,d]) => d.status && d.status !== "higido");
   const ausentes = dentesComRegistro.filter(([,d]) => d.status === "ausente").map(([k]) => k);
+  const versoesPaciente = state.odontogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel))
+    .sort((a, b) => b.data.localeCompare(a.data) || (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  async function salvarVersao() {
+    if (!versaoForm.data || !versaoForm.titulo.trim()) {
+      window.alert("Informe a data e o título deste momento clínico.");
+      return;
+    }
+    const ok = await dispatch({
+      type: "ADD_ODONTOGRAMA_VERSAO",
+      payload: {
+        pacienteId: pacSel, data: versaoForm.data, titulo: versaoForm.titulo.trim(),
+        obs: versaoForm.obs.trim(), dentes: JSON.parse(JSON.stringify(odo)),
+      },
+    });
+    if (ok !== false) {
+      setModalVersao(false);
+      setVersaoForm({ data: today(), titulo: "", obs: "" });
+    }
+  }
 
   return (
     <div>
@@ -5530,6 +5578,7 @@ function Odontograma({ state, dispatch }) {
             Ausentes: {ausentes.join(", ")}
           </div>
         )}
+        {paciente && <Btn onClick={() => setModalVersao(true)}>+ Registrar momento clínico</Btn>}
       </Card>
 
       {!pacSel && (
@@ -5601,8 +5650,38 @@ function Odontograma({ state, dispatch }) {
               </div>
             </Card>
           )}
+
+          <Card style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 700, color: C.navy, marginBottom: 10 }}>📅 Evolução dos odontogramas</div>
+            {!versoesPaciente.length && <div style={{ color: C.muted, fontSize: 13 }}>Nenhum momento clínico registrado. Salve uma versão para vinculá-la a futuros orçamentos.</div>}
+            {versoesPaciente.map(v => {
+              const registros = Object.entries(v.dentes || {}).filter(([, d]) => d.status && d.status !== "higido");
+              return <div key={v.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong>
+                  <span style={{ color: C.muted, fontSize: 11 }}>{registros.length} achado(s)</span>
+                </div>
+                {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{v.obs}</div>}
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                  {registros.map(([dente, d]) => <span key={dente} style={{ background: STATUS_CLINICO[d.status]?.cor, color: STATUS_CLINICO[d.status]?.texto, border: `1px solid ${STATUS_CLINICO[d.status]?.borda}`, borderRadius: 6, padding: "2px 7px", fontSize: 11 }}>
+                    {dente}: {STATUS_CLINICO[d.status]?.label}
+                  </span>)}
+                </div>
+              </div>;
+            })}
+          </Card>
         </>
       )}
+
+      {modalVersao && <Modal title="Registrar momento clínico" onClose={() => setModalVersao(false)}>
+        <div style={{ display: "grid", gap: 12 }}>
+          <Input label="Data *" type="date" value={versaoForm.data} onChange={e => setVersaoForm(f => ({ ...f, data: e.target.value }))} />
+          <Input label="Título *" value={versaoForm.titulo} onChange={e => setVersaoForm(f => ({ ...f, titulo: e.target.value }))} placeholder="Ex: Avaliação inicial, Pós-tratamento..." />
+          <textarea value={versaoForm.obs} onChange={e => setVersaoForm(f => ({ ...f, obs: e.target.value }))} placeholder="Observações deste momento clínico..." rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
+          <div style={{ background: C.tealLight, color: C.teal, borderRadius: 8, padding: 10, fontSize: 12 }}>Esta versão será imutável e poderá ser vinculada aos orçamentos.</div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalVersao(false)}>Cancelar</Btn><Btn onClick={salvarVersao}>Salvar versão</Btn></div>
+        </div>
+      </Modal>}
 
       {/* Modal de edição rápida do dente */}
       {modalDente && (
@@ -5957,6 +6036,9 @@ function orcamentoFromRow(o) {
     convenioNome: o.convenio_nome || null,
     tabelaPrecoId: o.tabela_preco_id || null,
     tabelaPrecoNome: o.tabela_preco_nome || null,
+    odontogramaVersaoId: o.odontograma_versao_id || null,
+    odontogramaVersaoTitulo: o.odontograma_versao_titulo || null,
+    odontogramaVersaoData: o.odontograma_versao_data || null,
     itens: Array.isArray(o.itens) ? o.itens : [],
     status: o.status,
     createdAt: o.created_at,
@@ -5972,6 +6054,13 @@ function historicoFromRow(h) {
     dentista: h.dentista || "",
     texto: h.texto,
     baixaIds: Array.isArray(h.baixa_ids) ? h.baixa_ids : [],
+  };
+}
+
+function odontogramaVersaoFromRow(v) {
+  return {
+    id: v.id, pacienteId: v.paciente_id, data: v.data, titulo: v.titulo,
+    obs: v.obs || "", dentes: v.dentes || {}, createdAt: v.created_at,
   };
 }
 
@@ -6037,7 +6126,11 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
           user_id: session.user.id, paciente_id: o.pacienteId, data: o.data,
           dentista: o.dentista, convenio_id: o.convenioId ? String(o.convenioId) : null,
           convenio_nome: o.convenioNome, tabela_preco_id: o.tabelaPrecoId,
-          tabela_preco_nome: o.tabelaPrecoNome, itens: o.itens, status: "pendente",
+          tabela_preco_nome: o.tabelaPrecoNome,
+          odontograma_versao_id: o.odontogramaVersaoId,
+          odontograma_versao_titulo: o.odontogramaVersaoTitulo,
+          odontograma_versao_data: o.odontogramaVersaoData,
+          itens: o.itens, status: "pendente",
         }).select().single();
         if (error) { window.alert(`Não foi possível salvar o orçamento: ${error.message}`); return false; }
         dispatch({ type: "ADD_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
@@ -6086,6 +6179,15 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         const { error } = await supabase.from("odontogramas").delete().eq("paciente_id", pacienteId).eq("dente", dente);
         if (error) { window.alert(`Não foi possível limpar o odontograma: ${error.message}`); return false; }
         dispatch(action);
+        return true;
+      } else if (action.type === "ADD_ODONTOGRAMA_VERSAO") {
+        const v = action.payload;
+        const { data, error } = await supabase.from("odontograma_versoes").insert({
+          user_id: session.user.id, paciente_id: v.pacienteId, data: v.data,
+          titulo: v.titulo, obs: v.obs, dentes: v.dentes,
+        }).select().single();
+        if (error) { window.alert(`Não foi possível salvar a versão do odontograma: ${error.message}`); return false; }
+        dispatch({ type: "ADD_ODONTOGRAMA_VERSAO_PERSISTED", payload: odontogramaVersaoFromRow(data) });
         return true;
       } else if (action.type === "UPDATE_PERIOGRAMA_DENTE") {
         const { pacienteId, dente, dados } = action.payload;
@@ -6268,6 +6370,17 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
+    async function loadOdontogramaVersoes() {
+      const { data, error } = await supabase.from("odontograma_versoes")
+        .select("*").eq("user_id", session.user.id).order("data", { ascending: false });
+      if (error) { console.error("Erro ao carregar versões do odontograma:", error); return; }
+      dispatch({ type: "LOAD_ODONTOGRAMA_VERSOES", payload: (data || []).map(odontogramaVersaoFromRow) });
+    }
+    loadOdontogramaVersoes();
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     async function loadAppState() {
       const { data, error } = await supabase.from("estado_app").select("dados").eq("user_id", session.user.id).maybeSingle();
       if (error) console.error("Erro ao carregar estado geral:", error);
@@ -6301,7 +6414,7 @@ export default function App() {
 
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
