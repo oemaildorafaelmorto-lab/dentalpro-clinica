@@ -297,12 +297,16 @@ function reducer(state, action) {
       return { ...state, periogramaVersoes: action.payload };
     case "ADD_PERIOGRAMA_VERSAO_PERSISTED":
       return { ...state, periogramaVersoes: [...state.periogramaVersoes, action.payload] };
+    case "DELETE_PERIOGRAMA_VERSAO_PERSISTED":
+      return { ...state, periogramaVersoes: state.periogramaVersoes.filter(v => v.id !== action.payload) };
     case "LOAD_ODONTOGRAMAS":
       return { ...state, odontogramas: action.payload };
     case "LOAD_ODONTOGRAMA_VERSOES":
       return { ...state, odontogramaVersoes: action.payload };
     case "ADD_ODONTOGRAMA_VERSAO_PERSISTED":
       return { ...state, odontogramaVersoes: [...state.odontogramaVersoes, action.payload] };
+    case "DELETE_ODONTOGRAMA_VERSAO_PERSISTED":
+      return { ...state, odontogramaVersoes: state.odontogramaVersoes.filter(v => v.id !== action.payload) };
     case "LOAD_APP_STATE":
       return { ...state, ...action.payload };
     case "UPDATE_PERIOGRAMA_DENTE": {
@@ -5499,6 +5503,26 @@ function FileiraDentes({ numeros, label, odo, onDenteClick }) {
   );
 }
 
+function OdontogramaSomenteLeitura({ odo }) {
+  return (
+    <div style={{ overflowX: "auto", marginTop: 10 }}>
+      <div style={{ minWidth: 620, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 10px" }}>
+        <div style={{ display: "flex", justifyContent: "center", gap: 18, marginBottom: 7 }}>
+          <FileiraDentes numeros={DENTES_PERM.supDir} label="SUP. DIREITO →" odo={odo} onDenteClick={() => {}} />
+          <div style={{ width: 1, background: C.border }} />
+          <FileiraDentes numeros={DENTES_PERM.supEsq} label="← SUP. ESQUERDO" odo={odo} onDenteClick={() => {}} />
+        </div>
+        <div style={{ height: 1, background: C.border, margin: "7px 0" }} />
+        <div style={{ display: "flex", justifyContent: "center", gap: 18 }}>
+          <FileiraDentes numeros={DENTES_PERM.infDir} label="INF. DIREITO →" odo={odo} onDenteClick={() => {}} />
+          <div style={{ width: 1, background: C.border }} />
+          <FileiraDentes numeros={DENTES_PERM.infEsq} label="← INF. ESQUERDO" odo={odo} onDenteClick={() => {}} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Odontograma({ state, dispatch }) {
   const [pacSel, setPacSel] = useState("");
   const [modalDente, setModalDente] = useState(null); // { dente }
@@ -5556,6 +5580,11 @@ function Odontograma({ state, dispatch }) {
       setModalVersao(false);
       setVersaoForm({ data: today(), titulo: "", obs: "" });
     }
+  }
+
+  async function excluirVersao(versao) {
+    if (!window.confirm(`Excluir definitivamente o odontograma "${versao.titulo}" de ${versao.data}?`)) return;
+    await dispatch({ type: "DELETE_ODONTOGRAMA_VERSAO", payload: versao.id });
   }
 
   return (
@@ -5665,14 +5694,13 @@ function Odontograma({ state, dispatch }) {
               return <div key={v.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                   <strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong>
-                  <span style={{ color: C.muted, fontSize: 11 }}>{registros.length} achado(s)</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: C.muted, fontSize: 11 }}>{registros.length} achado(s)</span>
+                    <Btn variant="danger" style={{ padding: "4px 9px", fontSize: 11 }} onClick={() => excluirVersao(v)}>Excluir</Btn>
+                  </div>
                 </div>
                 {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{v.obs}</div>}
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
-                  {registros.map(([dente, d]) => <span key={dente} style={{ background: STATUS_CLINICO[d.status]?.cor, color: STATUS_CLINICO[d.status]?.texto, border: `1px solid ${STATUS_CLINICO[d.status]?.borda}`, borderRadius: 6, padding: "2px 7px", fontSize: 11 }}>
-                    {dente}: {STATUS_CLINICO[d.status]?.label}
-                  </span>)}
-                </div>
+                <OdontogramaSomenteLeitura odo={v.dentes || {}} />
               </div>;
             })}
           </Card>
@@ -5813,6 +5841,11 @@ function Periograma({ state, dispatch }) {
     }
   }
 
+  async function excluirVersao(versao) {
+    if (!window.confirm(`Excluir definitivamente o periograma "${versao.titulo}" de ${versao.data}?`)) return;
+    await dispatch({ type: "DELETE_PERIOGRAMA_VERSAO", payload: versao.id });
+  }
+
   return <div>
     <Card style={{ marginBottom: 14, display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 220 }}><Select label="Selecione o paciente" value={pacSel} onChange={e => setPacSel(e.target.value)}>
@@ -5859,7 +5892,10 @@ function Periograma({ state, dispatch }) {
           return <div key={v.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
               <strong style={{ color: C.teal }}>{v.data} — {v.titulo}</strong>
-              <span style={{ color: C.muted, fontSize: 11 }}>{achados.length} dente(s) com registro</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: C.muted, fontSize: 11 }}>{achados.length} dente(s) com registro</span>
+                <Btn variant="danger" style={{ padding: "4px 9px", fontSize: 11 }} onClick={() => excluirVersao(v)}>Excluir</Btn>
+              </div>
             </div>
             {v.obs && <div style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>{v.obs}</div>}
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
@@ -6257,6 +6293,16 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         if (error) { window.alert(`Não foi possível salvar a versão do odontograma: ${error.message}`); return false; }
         dispatch({ type: "ADD_ODONTOGRAMA_VERSAO_PERSISTED", payload: odontogramaVersaoFromRow(data) });
         return true;
+      } else if (action.type === "DELETE_ODONTOGRAMA_VERSAO") {
+        const { error } = await supabase.from("odontograma_versoes").delete().eq("id", action.payload);
+        if (error) {
+          window.alert(error.code === "23503"
+            ? "Este odontograma está vinculado a um orçamento e não pode ser excluído."
+            : `Não foi possível excluir o odontograma: ${error.message}`);
+          return false;
+        }
+        dispatch({ type: "DELETE_ODONTOGRAMA_VERSAO_PERSISTED", payload: action.payload });
+        return true;
       } else if (action.type === "UPDATE_PERIOGRAMA_DENTE") {
         const { pacienteId, dente, dados } = action.payload;
         const { error } = await supabase.from("periogramas").upsert({
@@ -6280,6 +6326,11 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         }).select().single();
         if (error) { window.alert(`Não foi possível salvar a versão do periograma: ${error.message}`); return false; }
         dispatch({ type: "ADD_PERIOGRAMA_VERSAO_PERSISTED", payload: periogramaVersaoFromRow(data) });
+        return true;
+      } else if (action.type === "DELETE_PERIOGRAMA_VERSAO") {
+        const { error } = await supabase.from("periograma_versoes").delete().eq("id", action.payload);
+        if (error) { window.alert(`Não foi possível excluir o periograma: ${error.message}`); return false; }
+        dispatch({ type: "DELETE_PERIOGRAMA_VERSAO_PERSISTED", payload: action.payload });
         return true;
       } else if (action.type === "ADD_TABELA_PRECO") {
         const p = action.payload;
@@ -6502,7 +6553,7 @@ export default function App() {
 
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "DELETE_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO", "DELETE_PERIOGRAMA_VERSAO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
