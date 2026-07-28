@@ -530,10 +530,10 @@ function TelaSelecaoUsuario({ usuarios, onSelecionar }) {
             onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
           >
             <div style={{ fontSize: 28, marginBottom: 6 }}>
-              {u.perfil === "Dentista" ? "🩺" : u.perfil === "Recepcionista" ? "📋" : u.perfil === "Admin" ? "⚙️" : "👤"}
+              {perfilNormalizado(u.perfil) === "Dentista contratado" ? "🩺" : perfilNormalizado(u.perfil) === "Administrador" ? "⚙️" : "📋"}
             </div>
             <div style={{ fontWeight: 700, fontSize: 14 }}>{u.nome}</div>
-            <div style={{ color: "#A0C4D5", fontSize: 12, marginTop: 3 }}>{u.perfil}</div>
+            <div style={{ color: "#A0C4D5", fontSize: 12, marginTop: 3 }}>{perfilNormalizado(u.perfil)}</div>
           </button>
         ))}
       </div>
@@ -546,7 +546,7 @@ function TelaSelecaoUsuario({ usuarios, onSelecionar }) {
 }
 
 // ── Dashboard inicial ──────────────────────────────────────────────
-function Dashboard({ state, usuario, onTrocarUsuario }) {
+function Dashboard({ state, usuario }) {
   const [valoresVisiveis, setValoresVisiveis] = useState(false); // por padrão, oculto — mais seguro numa recepção
   const hoje = today();
 
@@ -610,10 +610,6 @@ function Dashboard({ state, usuario, onTrocarUsuario }) {
             {valoresVisiveis ? "🙈" : "👁"}
             <span style={{ fontSize: 12 }}>{valoresVisiveis ? "Ocultar" : "Mostrar"}</span>
           </button>
-          <button onClick={onTrocarUsuario} style={{
-            background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-            borderRadius: 8, padding: "5px 12px", color: "#A0C4D5", fontSize: 12, cursor: "pointer",
-          }}>Trocar usuário</button>
         </div>
       </div>
 
@@ -712,25 +708,81 @@ function Dashboard({ state, usuario, onTrocarUsuario }) {
   );
 }
 
+function DashboardOperacional({ state, usuario }) {
+  return <div>
+    <Card>
+      <h3 style={{ marginTop: 0, color: C.navy }}>Olá, {usuario.nome.split(" ")[0]}</h3>
+      <div style={{ color: C.muted, fontSize: 13 }}>Perfil Administrativo — visualização operacional sem dados financeiros.</div>
+    </Card>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginTop: 14 }}>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Pacientes</div><strong style={{ fontSize: 24, color: C.navy }}>{state.pacientes.length}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Dentistas</div><strong style={{ fontSize: 24, color: C.navy }}>{state.dentistasCadastrados.length}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Registros clínicos</div><strong style={{ fontSize: 24, color: C.navy }}>{state.historicoClinico.length}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Orçamentos em acompanhamento</div><strong style={{ fontSize: 24, color: C.navy }}>{state.orcamentos.length}</strong></Card>
+    </div>
+  </div>;
+}
+
+function DashboardDentista({ state, usuario }) {
+  const dentista = dentistaDoUsuario(usuario, state);
+  const nome = dentista?.nome || usuario.nome;
+  const orcamentos = state.orcamentos.filter(o => o.dentista === nome);
+  const baixas = state.baixas.filter(b => b.dentista === nome);
+  const baixaIds = new Set(baixas.map(b => String(b.id)));
+  const recebido = state.pagamentos.filter(p => baixaIds.has(String(p.baixaId))).reduce((s, p) => s + Number(p.valor || 0), 0);
+  const aprovado = orcamentos.reduce((s, o) => s + o.itens.reduce((subtotal, item) => subtotal + ((item.status || (o.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado" ? Number(item.valor) || 0 : 0), 0), 0);
+  const realizado = baixas.reduce((s, b) => s + Number(b.valor || 0), 0);
+  let repasse = 0;
+  if (dentista?.repasseTipo === "percentual") repasse = realizado * (Number(dentista.repassePercentual || 0) / 100);
+  else repasse = baixas.reduce((s, b) => {
+    const regra = dentista?.repasseTabelaFixa?.find(r => String(r.cod) === String(b.cod));
+    return s + Number(regra?.valor || 0);
+  }, 0);
+  return <div>
+    <Card><h3 style={{ marginTop: 0, color: C.navy }}>Meu desempenho — {nome}</h3><div style={{ color: C.muted, fontSize: 12 }}>Somente seus procedimentos e valores profissionais.</div></Card>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginTop: 14 }}>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Orçamentos criados</div><strong style={{ fontSize: 24, color: C.navy }}>{orcamentos.length}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Valor aprovado</div><strong style={{ fontSize: 22, color: C.green }}>{fmt(aprovado)}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Procedimentos realizados</div><strong style={{ fontSize: 22, color: C.teal }}>{fmt(realizado)}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Pagamentos vinculados</div><strong style={{ fontSize: 22, color: C.teal }}>{fmt(recebido)}</strong></Card>
+      <Card><div style={{ color: C.muted, fontSize: 12 }}>Meu repasse estimado</div><strong style={{ fontSize: 22, color: C.navy }}>{fmt(repasse)}</strong></Card>
+    </div>
+  </div>;
+}
+
 // ── Gerenciamento de Usuários ──────────────────────────────────────
-const PERFIS = ["Dentista", "Recepcionista", "Admin", "Outro"];
+const PERFIS = ["Administrador", "Administrativo", "Dentista contratado"];
+
+function perfilNormalizado(perfil) {
+  if (perfil === "admin" || perfil === "Admin" || perfil === "Administrador") return "Administrador";
+  if (perfil === "dentista_contratado" || perfil === "Dentista" || perfil === "Dentista contratado") return "Dentista contratado";
+  return "Administrativo";
+}
+
+function dentistaDoUsuario(usuario, state) {
+  if (!usuario) return null;
+  return state.dentistasCadastrados.find(d => String(d.id) === String(usuario.dentistaId || usuario.dentista_id))
+    || state.dentistasCadastrados.find(d => d.nome === usuario.nome)
+    || null;
+}
 
 function GerenciarUsuarios({ state, dispatch }) {
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ nome: "", perfil: "Recepcionista" });
+  const [form, setForm] = useState({ nome: "", perfil: "Administrativo", dentistaId: "" });
   const [editando, setEditando] = useState(null);
 
-  function abrirNovo() { setForm({ nome: "", perfil: "Recepcionista" }); setEditando(null); setModal(true); }
-  function abrirEditar(u) { setForm({ nome: u.nome, perfil: u.perfil }); setEditando(u); setModal(true); }
+  function abrirNovo() { setForm({ nome: "", perfil: "Administrativo", dentistaId: "" }); setEditando(null); setModal(true); }
+  function abrirEditar(u) { setForm({ nome: u.nome, perfil: perfilNormalizado(u.perfil), dentistaId: u.dentistaId || "" }); setEditando(u); setModal(true); }
 
   async function salvar() {
     if (!form.nome.trim()) return;
+    if (form.perfil === "Dentista contratado" && !form.dentistaId) return;
     if (editando) dispatch({ type: "UPDATE_USUARIO", payload: { ...editando, ...form } });
     else dispatch({ type: "ADD_USUARIO", payload: form });
     setModal(false);
   }
 
-  const icone = (perfil) => perfil === "Dentista" ? "🩺" : perfil === "Recepcionista" ? "📋" : perfil === "Admin" ? "⚙️" : "👤";
+  const icone = (perfil) => perfilNormalizado(perfil) === "Dentista contratado" ? "🩺" : perfilNormalizado(perfil) === "Administrador" ? "⚙️" : "📋";
 
   return (
     <div>
@@ -744,7 +796,7 @@ function GerenciarUsuarios({ state, dispatch }) {
               <span style={{ fontSize: 28 }}>{icone(u.perfil)}</span>
               <div>
                 <div style={{ fontWeight: 700, color: C.navy }}>{u.nome}</div>
-                <div style={{ color: C.muted, fontSize: 13 }}>{u.perfil}</div>
+                <div style={{ color: C.muted, fontSize: 13 }}>{perfilNormalizado(u.perfil)}</div>
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -763,6 +815,10 @@ function GerenciarUsuarios({ state, dispatch }) {
             <Select label="Perfil" value={form.perfil} onChange={e => setForm(x => ({ ...x, perfil: e.target.value }))}>
               {PERFIS.map(p => <option key={p} value={p}>{p}</option>)}
             </Select>
+            {form.perfil === "Dentista contratado" && <Select label="Profissional vinculado *" value={form.dentistaId} onChange={e => setForm(x => ({ ...x, dentistaId: e.target.value }))}>
+              <option value="">Selecione o dentista…</option>
+              {state.dentistasCadastrados.map(d => <option key={d.id} value={d.id}>{d.nome} — {d.cro || "CRO não informado"}</option>)}
+            </Select>}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Btn variant="ghost" onClick={() => setModal(false)}>Cancelar</Btn>
               <Btn onClick={salvar}>Salvar</Btn>
@@ -913,24 +969,29 @@ function ProcSearch({ label, value, onSelect, hasError, placeholder, catalogo })
   );
 }
 
-// Seletor de escopo de dentes: Elemento(s) específico(s) / Hemiarco / Arco
-// value = { escopo: "elemento"|"hemiarco"|"arco", dentes: [n,n,...] }
+// Seletor clínico: dente(s), quadrante ou sextante.
 function SeletorDentes({ value, onChange, modo = "permanente" }) {
-  const escopo = value?.escopo || "elemento";
+  const escopoLegado = value?.escopo || "elemento";
+  const escopo = escopoLegado === "hemiarco" ? "quadrante" : escopoLegado === "arco" ? "sextante" : escopoLegado;
   const dentes = value?.dentes || [];
 
   const DENTES = modo === "deciduo" ? DENTES_DEC : DENTES_PERM;
   const TODOS = modo === "deciduo" ? TODOS_DENTES_DEC : TODOS_DENTES_PERM;
 
-  const HEMIARCOS = [
-    { key: "supDir", label: "Superior Direito", dentes: DENTES.supDir },
-    { key: "supEsq", label: "Superior Esquerdo", dentes: DENTES.supEsq },
-    { key: "infEsq", label: "Inferior Esquerdo", dentes: DENTES.infEsq },
-    { key: "infDir", label: "Inferior Direito", dentes: DENTES.infDir },
+  const QUADRANTES = [
+    { key: "q1", label: "Quadrante 1", dentes: DENTES.supDir },
+    { key: "q2", label: "Quadrante 2", dentes: DENTES.supEsq },
+    { key: "q3", label: "Quadrante 3", dentes: DENTES.infEsq },
+    { key: "q4", label: "Quadrante 4", dentes: DENTES.infDir },
   ];
-  const ARCOS = [
-    { key: "sup", label: "Arco Superior", dentes: [...DENTES.supDir, ...DENTES.supEsq] },
-    { key: "inf", label: "Arco Inferior", dentes: [...DENTES.infDir, ...DENTES.infEsq] },
+  const corte = modo === "deciduo" ? 2 : 5;
+  const SEXTANTES = [
+    { key: "s1", label: "Sextante 1", dentes: DENTES.supDir.slice(0, corte) },
+    { key: "s2", label: "Sextante 2", dentes: [...DENTES.supDir.slice(corte), ...DENTES.supEsq.slice(0, DENTES.supEsq.length - corte)] },
+    { key: "s3", label: "Sextante 3", dentes: DENTES.supEsq.slice(DENTES.supEsq.length - corte) },
+    { key: "s4", label: "Sextante 4", dentes: DENTES.infEsq.slice(DENTES.infEsq.length - corte) },
+    { key: "s5", label: "Sextante 5", dentes: [...DENTES.infEsq.slice(0, DENTES.infEsq.length - corte), ...DENTES.infDir.slice(corte)] },
+    { key: "s6", label: "Sextante 6", dentes: DENTES.infDir.slice(0, corte) },
   ];
 
   function setEscopo(novoEscopo) {
@@ -956,8 +1017,8 @@ function SeletorDentes({ value, onChange, modo = "permanente" }) {
       <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
         {[
           { k: "elemento", label: "Dente(s) específico(s)" },
-          { k: "hemiarco", label: "Hemiarco" },
-          { k: "arco", label: "Arco completo" },
+          { k: "quadrante", label: "Quadrante" },
+          { k: "sextante", label: "Sextante" },
         ].map(opt => (
           <button key={opt.k} onClick={() => setEscopo(opt.k)} style={{
             flex: 1, padding: "7px 8px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
@@ -990,10 +1051,9 @@ function SeletorDentes({ value, onChange, modo = "permanente" }) {
         </div>
       )}
 
-      {/* Hemiarco: 4 opções de quadrante */}
-      {escopo === "hemiarco" && (
+      {escopo === "quadrante" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          {HEMIARCOS.map(h => {
+          {QUADRANTES.map(h => {
             const ativo = JSON.stringify(dentes) === JSON.stringify(h.dentes);
             return (
               <button key={h.key} onClick={() => escolherGrupo(h.dentes)} style={{
@@ -1011,10 +1071,9 @@ function SeletorDentes({ value, onChange, modo = "permanente" }) {
         </div>
       )}
 
-      {/* Arco: 2 opções */}
-      {escopo === "arco" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          {ARCOS.map(a => {
+      {escopo === "sextante" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+          {SEXTANTES.map(a => {
             const ativo = JSON.stringify(dentes) === JSON.stringify(a.dentes);
             return (
               <button key={a.key} onClick={() => escolherGrupo(a.dentes)} style={{
@@ -2940,7 +2999,7 @@ function regioesPeriodontais(divisao = "sextantes") {
   ];
 }
 
-function Orcamentos({ state, dispatch }) {
+function Orcamentos({ state, dispatch, usuario }) {
   const [modal, setModal] = useState(false);
   const [pacSel, setPacSel] = useState("");
   const [data, setData] = useState(today());
@@ -2969,6 +3028,8 @@ function Orcamentos({ state, dispatch }) {
     .filter(v => String(v.pacienteId) === String(pacSel) && String(v.odontogramaVersaoId) === String(odontogramaVersaoSel))
     .sort((a, b) => b.data.localeCompare(a.data));
   const periogramaVersao = state.periogramaVersoes.find(v => v.id === periogramaVersaoSel);
+  const perfilUsuario = perfilNormalizado(usuario?.perfil);
+  const dentistaVinculado = dentistaDoUsuario(usuario, state);
   const referenciasClinicasCompletas = !!odontogramaVersao && !!periogramaVersao;
   const podeSalvarOrcamento = !!pacSel && !!dentista && !!tabelaSel && referenciasClinicasCompletas
     && itens.length > 0 && itens.every(it => !!it.cod && it.dentes?.length > 0);
@@ -2978,6 +3039,10 @@ function Orcamentos({ state, dispatch }) {
       setTabelaSel((tabelasAtivas.find(t => t.padrao) || tabelasAtivas[0]).id);
     }
   }, [state.tabelasPreco, tabelaSel]);
+
+  useEffect(() => {
+    if (perfilUsuario === "Dentista contratado") setDentista(dentistaVinculado?.nome || usuario?.nome || "");
+  }, [perfilUsuario, dentistaVinculado?.nome, usuario?.nome, modal]);
 
   useEffect(() => {
     if (!odontogramaVersaoSel) {
@@ -3350,7 +3415,7 @@ function Orcamentos({ state, dispatch }) {
               </div>
             </div>}
 
-            <Select label="Dentista responsável *" value={dentista} onChange={e => { setDentista(e.target.value); setErroSalvar(false); }} style={erroSalvar && !dentista ? { borderColor: C.red } : {}}>
+            <Select disabled={perfilUsuario === "Dentista contratado"} label="Dentista responsável *" value={dentista} onChange={e => { setDentista(e.target.value); setErroSalvar(false); }} style={erroSalvar && !dentista ? { borderColor: C.red } : {}}>
               <option value="">Selecione o dentista…</option>
               {state.dentistasCadastrados.map(d => (
                 <option key={d.id} value={d.nome}>{d.nome}{d.especialidade ? ` — ${d.especialidade}` : ""}</option>
@@ -6347,7 +6412,6 @@ const GRUPOS = [
       { id: "dentistas", label: "🩺 Dentistas" },
       { id: "convenios", label: "🏥 Convênios" },
       { id: "tabelasPreco", label: "💲 Tabelas de Preço" },
-      { id: "usuarios",  label: "👥 Usuários" },
       { id: "impressos", label: "🖨 Impressos" },
     ],
   },
@@ -6821,6 +6885,7 @@ export default function App() {
   const [grupoAberto, setGrupoAberto] = useState("inicio");
   const [avisoImport, setAvisoImport] = useState(null);
   const [usuarioAtivo, setUsuarioAtivo] = useState(null);
+  const [perfilLoading, setPerfilLoading] = useState(true);
   const [pacientesLoaded, setPacientesLoaded] = useState(false);
   const [appStateLoaded, setAppStateLoaded] = useState(false);
   const [alteracoesPendentes, setAlteracoesPendentes] = useState({});
@@ -6873,6 +6938,40 @@ export default function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setUsuarioAtivo(null);
+      setPerfilLoading(false);
+      return;
+    }
+    let ativo = true;
+    async function carregarPerfilDaConta() {
+      setPerfilLoading(true);
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+      if (!ativo) return;
+      if (error) console.error("Erro ao carregar perfil de acesso:", error);
+      const emailConta = (session.user.email || "").toLowerCase();
+      const adminInicial = emailConta === "contato@clinicacf.com.br" || (emailConta.includes("isaias") && emailConta.includes("game") && emailConta.includes("dev"));
+      const perfil = data || {
+        id: session.user.id,
+        email: session.user.email,
+        nome: session.user.user_metadata?.nome || session.user.email?.split("@")[0] || "Usuário",
+        role: adminInicial ? "admin" : "administrativo",
+        dentista_id: null,
+      };
+      setUsuarioAtivo({
+        id: perfil.id,
+        nome: perfil.nome || perfil.email || session.user.email,
+        perfil: perfil.role,
+        dentistaId: perfil.dentista_id || "",
+        email: perfil.email || session.user.email,
+      });
+      setPerfilLoading(false);
+    }
+    carregarPerfilDaConta();
+    return () => { ativo = false; };
+  }, [session]);
 
   // ── Carregar pacientes do Supabase ao autenticar ──
   useEffect(() => {
@@ -7027,6 +7126,64 @@ export default function App() {
     }
   }, [dbDispatch]);
 
+  const perfilAtual = perfilNormalizado(usuarioAtivo?.perfil);
+  const dentistaUsuario = dentistaDoUsuario(usuarioAtivo, state);
+  const nomeDentistaUsuario = dentistaUsuario?.nome || usuarioAtivo?.nome || "";
+
+  const stateVisivel = useMemo(() => {
+    if (perfilAtual !== "Dentista contratado") return state;
+    const orcamentos = state.orcamentos.filter(o => o.dentista === nomeDentistaUsuario);
+    const idsOrcamentos = new Set(orcamentos.map(o => String(o.id)));
+    const baixas = state.baixas.filter(b => b.dentista === nomeDentistaUsuario || idsOrcamentos.has(String(b.orcamentoId)));
+    const idsBaixas = new Set(baixas.map(b => String(b.id)));
+    return {
+      ...state,
+      orcamentos,
+      baixas,
+      pagamentos: state.pagamentos.filter(p => idsBaixas.has(String(p.baixaId))),
+      caixa: [],
+      contasPagar: [],
+      recebimentosConvenio: [],
+    };
+  }, [state, perfilAtual, nomeDentistaUsuario]);
+
+  const dispatchComPermissao = useCallback((action) => {
+    if (perfilAtual === "Administrador") return patchedDispatch(action);
+    if (perfilAtual === "Administrativo") {
+      window.alert("Seu perfil Administrativo possui acesso somente para visualização.");
+      return Promise.resolve(false);
+    }
+    const permitidas = ["ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "DELETE_ORCAMENTO", "ADD_BAIXA", "DELETE_BAIXA", "ADD_HISTORICO", "UPDATE_HISTORICO", "UPDATE_ODONTOGRAMA", "CLEAR_ODONTOGRAMA_DENTE", "ADD_ODONTOGRAMA_VERSAO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_PERIOGRAMA_VERSAO"];
+    if (!permitidas.includes(action.type)) {
+      window.alert("O Dentista contratado só pode alterar seus próprios registros clínicos e procedimentos.");
+      return Promise.resolve(false);
+    }
+    if (action.type === "ADD_ORCAMENTO" && action.payload?.dentista !== nomeDentistaUsuario) {
+      window.alert("Você só pode criar orçamentos em seu próprio nome.");
+      return Promise.resolve(false);
+    }
+    if (action.type === "ADD_BAIXA" && action.payload?.dentista !== nomeDentistaUsuario) {
+      window.alert("Você só pode registrar procedimentos realizados por você.");
+      return Promise.resolve(false);
+    }
+    if (action.type === "DELETE_BAIXA") {
+      const baixa = state.baixas.find(b => String(b.id) === String(action.payload));
+      if (!baixa || baixa.dentista !== nomeDentistaUsuario) {
+        window.alert("Você não pode excluir procedimento realizado por outro dentista.");
+        return Promise.resolve(false);
+      }
+    }
+    if (["APROVAR_ORCAMENTO", "DELETE_ORCAMENTO"].includes(action.type)) {
+      const id = action.payload?.id ?? action.payload;
+      const orcamento = state.orcamentos.find(o => String(o.id) === String(id));
+      if (!orcamento || orcamento.dentista !== nomeDentistaUsuario) {
+        window.alert("Você não pode alterar orçamento de outro dentista.");
+        return Promise.resolve(false);
+      }
+    }
+    return patchedDispatch(action);
+  }, [perfilAtual, patchedDispatch, nomeDentistaUsuario, state.orcamentos, state.baixas]);
+
   function irPara(tabId) {
     if (tabId === tab) return true;
     if (!confirmarSaidaComPendencias()) return false;
@@ -7037,7 +7194,7 @@ export default function App() {
 
   function abrirGrupo(grupoId) {
     if (ABA_PARA_GRUPO[tab] !== grupoId) {
-      const primeira = GRUPOS.find(g => g.id === grupoId)?.abas[0]?.id;
+      const primeira = (typeof gruposVisiveis !== "undefined" ? gruposVisiveis : GRUPOS).find(g => g.id === grupoId)?.abas[0]?.id;
       if (primeira && !irPara(primeira)) return;
     }
     setGrupoAberto(grupoId);
@@ -7084,7 +7241,7 @@ export default function App() {
   }
 
   // ── Loading state ──
-  if (authLoading) {
+  if (authLoading || (!!session && perfilLoading)) {
     return (
       <div style={{ minHeight: "100vh", background: C.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', 'Segoe UI', sans-serif" }}>
         <div style={{ textAlign: "center" }}>
@@ -7100,25 +7257,15 @@ export default function App() {
     return <TelaLogin onLogin={(s) => setSession(s)} />;
   }
 
-  // ── Sessão ativa, mas sem selecionar "quem está usando" ──
-  if (!usuarioAtivo) {
-    return (
-      <div>
-        <div style={{ position: "fixed", top: 12, right: 16, zIndex: 200 }}>
-          <button onClick={handleLogout} style={{
-            background: "transparent", color: "#A0C4D5", border: "1px solid #2A4A6C", borderRadius: 8,
-            padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer",
-          }}>Sair da conta</button>
-        </div>
-        <TelaSelecaoUsuario
-          usuarios={state.usuarios}
-          onSelecionar={u => { setUsuarioAtivo(u); setTab("dashboard"); setGrupoAberto("inicio"); }}
-        />
-      </div>
-    );
-  }
-
-  const grupoAtual = GRUPOS.find(g => g.id === grupoAberto);
+  const abasPermitidas = perfilAtual === "Administrador"
+    ? null
+    : perfilAtual === "Administrativo"
+      ? new Set(["dashboard", "pacientes", "dentistas", "convenios", "impressos", "historico", "odontograma", "periograma", "orcamentos", "baixas"])
+      : new Set(["dashboard", "pacientes", "historico", "odontograma", "periograma", "orcamentos", "baixas"]);
+  const gruposVisiveis = GRUPOS
+    .map(grupo => ({ ...grupo, abas: grupo.abas.filter(aba => !abasPermitidas || abasPermitidas.has(aba.id)) }))
+    .filter(grupo => grupo.abas.length > 0);
+  const grupoAtual = gruposVisiveis.find(g => g.id === grupoAberto) || gruposVisiveis[0];
 
   return (
     <UnsavedChangesContext.Provider value={registrarAlteracaoPendente}>
@@ -7130,7 +7277,7 @@ export default function App() {
         </button>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-          {GRUPOS.map(g => (
+          {gruposVisiveis.map(g => (
             <button key={g.id} onClick={() => abrirGrupo(g.id)} style={{
               background: grupoAberto === g.id ? C.teal : "transparent",
               color: grupoAberto === g.id ? C.white : "#A0C4D5",
@@ -7143,12 +7290,8 @@ export default function App() {
         <div style={{ display: "flex", gap: 6, borderLeft: "1px solid #2A4A6C", paddingLeft: 12, marginLeft: 4, alignItems: "center" }}>
           {/* Usuário ativo */}
           <span style={{ color: "#7AB8CC", fontSize: 12, whiteSpace: "nowrap" }}>
-            {usuarioAtivo.perfil === "Dentista" ? "🩺" : "👤"} {usuarioAtivo.nome.split(" ")[0]}
+            {perfilAtual === "Dentista contratado" ? "🩺" : perfilAtual === "Administrador" ? "⚙️" : "📋"} {usuarioAtivo.nome.split(" ")[0]}
           </span>
-          <button onClick={() => { if (confirmarSaidaComPendencias()) setUsuarioAtivo(null); }} title="Trocar usuário" style={{
-            background: "transparent", color: "#A0C4D5", border: "1px solid #2A4A6C", borderRadius: 8,
-            padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-          }}>Trocar</button>
           <button onClick={exportarBackup} style={{
             background: "transparent", color: "#A0C4D5", border: "1px solid #2A4A6C", borderRadius: 8,
             padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
@@ -7195,25 +7338,29 @@ export default function App() {
       )}
 
       {/* Conteúdo */}
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px" }}>
+      {perfilAtual === "Administrativo" && <style>{`.perfil-somente-leitura button { display: none !important; }`}</style>}
+      <div className={perfilAtual === "Administrativo" ? "perfil-somente-leitura" : ""} style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px" }}>
+        {perfilAtual !== "Administrador" && <div style={{ background: perfilAtual === "Administrativo" ? C.amberLight : C.tealLight, color: perfilAtual === "Administrativo" ? C.amber : C.teal, borderRadius: 8, padding: "8px 12px", fontSize: 11, marginBottom: 12 }}>
+          {perfilAtual === "Administrativo" ? "Perfil Administrativo: acesso operacional somente para visualização; dados financeiros estão ocultos." : `Perfil Dentista contratado: exibindo somente os procedimentos e indicadores de ${nomeDentistaUsuario}.`}
+        </div>}
         {tab !== "dashboard" && (
           <h2 style={{ margin: "0 0 20px", color: C.navy, fontSize: 22, fontWeight: 800 }}>
             {ABA_LABEL[tab]}
           </h2>
         )}
 
-        {tab === "dashboard"        && <Dashboard state={state} usuario={usuarioAtivo} onTrocarUsuario={() => setUsuarioAtivo(null)} />}
-        {tab === "usuarios"         && <GerenciarUsuarios state={state} dispatch={patchedDispatch} />}
-        {tab === "pacientes"        && <Pacientes state={state} dispatch={patchedDispatch} />}
-        {tab === "dentistas"        && <Dentistas state={state} dispatch={patchedDispatch} />}
-        {tab === "convenios"        && <Convenios state={state} dispatch={patchedDispatch} />}
-        {tab === "tabelasPreco"     && <TabelasPreco state={state} dispatch={patchedDispatch} />}
-        {tab === "impressos"        && <Impressos state={state} />}
-        {tab === "historico"        && <HistoricoClinico state={state} dispatch={patchedDispatch} onCriarOrcamento={() => irPara("orcamentos")} />}
-        {tab === "odontograma"      && <Odontograma state={state} dispatch={patchedDispatch} />}
-        {tab === "periograma"       && <Periograma state={state} dispatch={patchedDispatch} />}
-        {tab === "orcamentos"       && <Orcamentos state={state} dispatch={patchedDispatch} />}
-        {tab === "baixas"           && <Baixas state={state} dispatch={patchedDispatch} />}
+        {tab === "dashboard"        && (perfilAtual === "Administrador" ? <Dashboard state={state} usuario={usuarioAtivo} /> : perfilAtual === "Dentista contratado" ? <DashboardDentista state={state} usuario={usuarioAtivo} /> : <DashboardOperacional state={state} usuario={usuarioAtivo} />)}
+        {tab === "usuarios" && perfilAtual === "Administrador" && <GerenciarUsuarios state={state} dispatch={dispatchComPermissao} />}
+        {tab === "pacientes"        && <Pacientes state={stateVisivel} dispatch={dispatchComPermissao} />}
+        {tab === "dentistas"        && <Dentistas state={stateVisivel} dispatch={dispatchComPermissao} />}
+        {tab === "convenios"        && <Convenios state={stateVisivel} dispatch={dispatchComPermissao} />}
+        {tab === "tabelasPreco" && perfilAtual === "Administrador" && <TabelasPreco state={state} dispatch={dispatchComPermissao} />}
+        {tab === "impressos"        && <Impressos state={stateVisivel} />}
+        {tab === "historico"        && <HistoricoClinico state={stateVisivel} dispatch={dispatchComPermissao} onCriarOrcamento={() => irPara("orcamentos")} />}
+        {tab === "odontograma"      && <Odontograma state={stateVisivel} dispatch={dispatchComPermissao} />}
+        {tab === "periograma"       && <Periograma state={stateVisivel} dispatch={dispatchComPermissao} />}
+        {tab === "orcamentos"       && <Orcamentos state={stateVisivel} dispatch={dispatchComPermissao} usuario={usuarioAtivo} />}
+        {tab === "baixas"           && <Baixas state={stateVisivel} dispatch={dispatchComPermissao} />}
         {tab === "pagamentos"       && <Pagamentos state={state} dispatch={patchedDispatch} />}
         {tab === "inadimplencia"    && <Inadimplencia state={state} dispatch={patchedDispatch} />}
         {tab === "conveniosReceber" && <ConveniosReceber state={state} dispatch={patchedDispatch} />}
