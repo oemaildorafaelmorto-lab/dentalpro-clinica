@@ -45,6 +45,7 @@ const initialState = {
   nextFicha: 1,
   nextFichaDentista: 3,
   odontogramas: {},
+  periogramas: {},
 };
 
 function reducer(state, action) {
@@ -103,6 +104,7 @@ function reducer(state, action) {
         nextFicha: dados.nextFicha || 1,
         nextFichaDentista: dados.nextFichaDentista || 1,
         odontogramas: dados.odontogramas || {},
+        periogramas: dados.periogramas || {},
       };
     }
     case "ADD_CONVENIO": {
@@ -284,6 +286,19 @@ function reducer(state, action) {
       const odo2 = { ...(state.odontogramas[pid] || {}) };
       delete odo2[d];
       return { ...state, odontogramas: { ...state.odontogramas, [pid]: odo2 } };
+    }
+    case "LOAD_PERIOGRAMAS":
+      return { ...state, periogramas: action.payload };
+    case "UPDATE_PERIOGRAMA_DENTE": {
+      const { pacienteId, dente, dados } = action.payload;
+      const atual = state.periogramas[pacienteId] || {};
+      return { ...state, periogramas: { ...state.periogramas, [pacienteId]: { ...atual, [dente]: dados } } };
+    }
+    case "CLEAR_PERIOGRAMA_DENTE": {
+      const { pacienteId, dente } = action.payload;
+      const atual = { ...(state.periogramas[pacienteId] || {}) };
+      delete atual[dente];
+      return { ...state, periogramas: { ...state.periogramas, [pacienteId]: atual } };
     }
     case "ADD_CONTA_PAGAR": {
       const c = { ...action.payload, id: state.nextId.conta, status: "aberta" };
@@ -5632,6 +5647,107 @@ function Odontograma({ state, dispatch }) {
   );
 }
 
+const CONDICOES_PERIO = {
+  tartaro: { label: "Acúmulo de tártaro", cor: "#E8A020" },
+  retracao: { label: "Retração gengival", cor: "#C0392B" },
+  hipertrofia: { label: "Hipertrofia gengival", cor: "#9B59B6" },
+};
+
+function FileiraPerio({ numeros, label, odo, perio, onDenteClick }) {
+  return <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+    <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, letterSpacing: 1 }}>{label}</div>
+    <div style={{ display: "flex", gap: 2 }}>
+      {numeros.map(d => <div key={d} style={{ position: "relative" }}>
+        <DenteIcone dente={d} dados={odo[d]} onClick={() => onDenteClick(d)} size={42} />
+        <div style={{ position: "absolute", bottom: -4, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 2 }}>
+          {(perio[d]?.condicoes || []).map(c => <span key={c} title={CONDICOES_PERIO[c]?.label} style={{ width: 7, height: 7, borderRadius: "50%", background: CONDICOES_PERIO[c]?.cor }} />)}
+        </div>
+      </div>)}
+    </div>
+  </div>;
+}
+
+function Periograma({ state, dispatch }) {
+  const [pacSel, setPacSel] = useState("");
+  const [modo, setModo] = useState("permanente");
+  const [modalDente, setModalDente] = useState(null);
+  const [condicoes, setCondicoes] = useState([]);
+  const [obs, setObs] = useState("");
+  const odo = pacSel ? (state.odontogramas[pacSel] || {}) : {};
+  const perio = pacSel ? (state.periogramas[pacSel] || {}) : {};
+  const DENTES = modo === "permanente" ? DENTES_PERM : DENTES_DEC;
+
+  function abrirDente(dente) {
+    setCondicoes([...(perio[dente]?.condicoes || [])]);
+    setObs(perio[dente]?.obs || "");
+    setModalDente({ dente });
+  }
+
+  function alternar(condicao) {
+    setCondicoes(c => c.includes(condicao) ? c.filter(x => x !== condicao) : [...c, condicao]);
+  }
+
+  async function salvar() {
+    const action = condicoes.length || obs.trim()
+      ? { type: "UPDATE_PERIOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente, dados: { condicoes, obs } } }
+      : { type: "CLEAR_PERIOGRAMA_DENTE", payload: { pacienteId: pacSel, dente: modalDente.dente } };
+    const ok = await dispatch(action);
+    if (ok !== false) setModalDente(null);
+  }
+
+  const registros = Object.entries(perio).filter(([, d]) => d.condicoes?.length || d.obs);
+
+  return <div>
+    <Card style={{ marginBottom: 14, display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 220 }}><Select label="Selecione o paciente" value={pacSel} onChange={e => setPacSel(e.target.value)}>
+        <option value="">Escolha um paciente…</option>
+        {state.pacientes.map(p => <option key={p.id} value={p.id}>Ficha #{String(p.ficha).padStart(4, "0")} — {p.nome}</option>)}
+      </Select></div>
+      <div style={{ display: "flex", gap: 6 }}>{["permanente", "deciduo"].map(m => <button key={m} onClick={() => setModo(m)} style={{
+        padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
+        border: `2px solid ${modo === m ? C.teal : C.border}`, background: modo === m ? C.tealLight : C.white, color: modo === m ? C.teal : C.muted,
+      }}>{m === "permanente" ? "Permanente" : "Decíduo"}</button>)}</div>
+    </Card>
+    {!pacSel && <div style={{ textAlign: "center", color: C.muted, padding: 60 }}>Selecione um paciente para visualizar o periograma.</div>}
+    {pacSel && <>
+      <Card style={{ overflowX: "auto", marginBottom: 14 }}>
+        <div style={{ minWidth: 640 }}>
+          <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
+            {Object.entries(CONDICOES_PERIO).map(([k, v]) => <span key={k} style={{ fontSize: 11 }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: v.cor, marginRight: 5 }} />{v.label}</span>)}
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 20, marginBottom: 8 }}>
+            <FileiraPerio numeros={DENTES.supDir} label="SUP. DIREITO →" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <div style={{ width: 1, background: C.border }} />
+            <FileiraPerio numeros={DENTES.supEsq} label="← SUP. ESQUERDO" odo={odo} perio={perio} onDenteClick={abrirDente} />
+          </div>
+          <div style={{ height: 1, background: C.border, margin: "10px 0" }} />
+          <div style={{ display: "flex", justifyContent: "center", gap: 20 }}>
+            <FileiraPerio numeros={DENTES.infDir} label="INF. DIREITO →" odo={odo} perio={perio} onDenteClick={abrirDente} />
+            <div style={{ width: 1, background: C.border }} />
+            <FileiraPerio numeros={DENTES.infEsq} label="← INF. ESQUERDO" odo={odo} perio={perio} onDenteClick={abrirDente} />
+          </div>
+        </div>
+      </Card>
+      <div style={{ textAlign: "center", color: C.muted, fontSize: 11, marginBottom: 14 }}>O estado do dente vem do Odontograma e não pode ser alterado aqui. Clique para registrar condições periodontais.</div>
+      {!!registros.length && <Card><strong style={{ color: C.navy }}>Resumo periodontal</strong>
+        {registros.map(([dente, d]) => <div key={dente} style={{ padding: "8px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
+          <strong>Dente {dente}:</strong> {d.condicoes.map(c => CONDICOES_PERIO[c]?.label).join(", ")}{d.obs && ` — ${d.obs}`}
+        </div>)}
+      </Card>}
+    </>}
+    {modalDente && <Modal title={`Periograma — Dente ${modalDente.dente}`} onClose={() => setModalDente(null)}>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ background: C.bg, padding: 10, borderRadius: 8, fontSize: 12 }}>Estado odontológico: <strong>{STATUS_CLINICO[odo[modalDente.dente]?.status || "higido"].label}</strong> (somente leitura)</div>
+        {Object.entries(CONDICOES_PERIO).map(([k, v]) => <label key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, border: `1.5px solid ${condicoes.includes(k) ? v.cor : C.border}`, borderRadius: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={condicoes.includes(k)} onChange={() => alternar(k)} /><span style={{ width: 10, height: 10, borderRadius: "50%", background: v.cor }} /><strong>{v.label}</strong>
+        </label>)}
+        <textarea value={obs} onChange={e => setObs(e.target.value)} placeholder="Observações periodontais…" rows={3} style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: 10, fontFamily: "inherit" }} />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><Btn variant="ghost" onClick={() => setModalDente(null)}>Cancelar</Btn><Btn onClick={salvar}>Salvar</Btn></div>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 // ── App principal ──────────────────────────────────────────────────
 const GRUPOS = [
   {
@@ -5659,6 +5775,7 @@ const GRUPOS = [
     abas: [
       { id: "historico",   label: "📜 Histórico" },
       { id: "odontograma", label: "🦷 Odontograma" },
+      { id: "periograma",  label: "🪥 Periograma" },
       { id: "orcamentos",  label: "📋 Orçamentos" },
       { id: "baixas",      label: "✅ Baixa de Proc." },
     ],
@@ -5950,6 +6067,21 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         if (error) { window.alert(`Não foi possível excluir o registro clínico: ${error.message}`); return false; }
         dispatch({ type: "DELETE_HISTORICO_PERSISTED", payload: action.payload });
         return true;
+      } else if (action.type === "UPDATE_PERIOGRAMA_DENTE") {
+        const { pacienteId, dente, dados } = action.payload;
+        const { error } = await supabase.from("periogramas").upsert({
+          user_id: session.user.id, paciente_id: pacienteId, dente,
+          condicoes: dados.condicoes, obs: dados.obs || "", updated_at: new Date().toISOString(),
+        }, { onConflict: "paciente_id,dente" });
+        if (error) { window.alert(`Não foi possível salvar o periograma: ${error.message}`); return false; }
+        dispatch(action);
+        return true;
+      } else if (action.type === "CLEAR_PERIOGRAMA_DENTE") {
+        const { pacienteId, dente } = action.payload;
+        const { error } = await supabase.from("periogramas").delete().eq("paciente_id", pacienteId).eq("dente", dente);
+        if (error) { window.alert(`Não foi possível limpar o periograma: ${error.message}`); return false; }
+        dispatch(action);
+        return true;
       } else if (action.type === "ADD_TABELA_PRECO") {
         const p = action.payload;
         if (p.padrao) {
@@ -6083,9 +6215,24 @@ export default function App() {
     loadHistorico();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    async function loadPeriogramas() {
+      const { data, error } = await supabase.from("periogramas").select("*").eq("user_id", session.user.id);
+      if (error) { console.error("Erro ao carregar periogramas:", error); return; }
+      const porPaciente = {};
+      (data || []).forEach(r => {
+        if (!porPaciente[r.paciente_id]) porPaciente[r.paciente_id] = {};
+        porPaciente[r.paciente_id][r.dente] = { condicoes: r.condicoes || [], obs: r.obs || "" };
+      });
+      dispatch({ type: "LOAD_PERIOGRAMAS", payload: porPaciente });
+    }
+    loadPeriogramas();
+  }, [session]);
+
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_HISTORICO", "UPDATE_HISTORICO", "DELETE_HISTORICO", "UPDATE_PERIOGRAMA_DENTE", "CLEAR_PERIOGRAMA_DENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
       return dbDispatch(action);
     } else {
       dispatch(action);
@@ -6272,6 +6419,7 @@ export default function App() {
         {tab === "impressos"        && <Impressos state={state} />}
         {tab === "historico"        && <HistoricoClinico state={state} dispatch={patchedDispatch} onCriarOrcamento={() => irPara("orcamentos")} />}
         {tab === "odontograma"      && <Odontograma state={state} dispatch={patchedDispatch} />}
+        {tab === "periograma"       && <Periograma state={state} dispatch={patchedDispatch} />}
         {tab === "orcamentos"       && <Orcamentos state={state} dispatch={patchedDispatch} />}
         {tab === "baixas"           && <Baixas state={state} dispatch={patchedDispatch} />}
         {tab === "pagamentos"       && <Pagamentos state={state} dispatch={patchedDispatch} />}
