@@ -1,5 +1,16 @@
-import { useState, useReducer, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useReducer, useMemo, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { supabase } from "./lib/supabase.js";
+
+const UnsavedChangesContext = createContext(null);
+
+function useUnsavedChanges(id, dirty, label) {
+  const register = useContext(UnsavedChangesContext);
+  useEffect(() => {
+    if (!register) return;
+    register(id, dirty ? label : null);
+    return () => register(id, null);
+  }, [register, id, dirty, label]);
+}
 
 // ── Paleta clínica moderna ──────────────────────────────────────────
 // Azul-petróleo profissional + branco clínico + âmbar para alertas
@@ -1035,12 +1046,21 @@ function Btn({ children, variant = "primary", onClick, style, disabled }) {
 }
 
 function Modal({ title, onClose, children }) {
+  const [dirty, setDirty] = useState(false);
+  const modalId = useRef(`modal-${Math.random().toString(36).slice(2)}`);
+  useUnsavedChanges(modalId.current, dirty, title);
+
+  function fecharComProtecao() {
+    if (dirty && !window.confirm("Você inseriu ou alterou dados neste formulário. Deseja sair sem salvar?")) return;
+    onClose();
+  }
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
+    <div onInputCapture={() => setDirty(true)} onChangeCapture={() => setDirty(true)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 14, padding: 28, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h3 style={{ margin: 0, color: C.navy, fontSize: 18 }}>{title}</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: C.muted }}>×</button>
+          <button onClick={fecharComProtecao} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: C.muted }}>×</button>
         </div>
         {children}
       </div>
@@ -5807,6 +5827,7 @@ function Periograma({ state, dispatch }) {
   const odontogramaVersao = odontogramasPaciente.find(v => String(v.id) === String(odontogramaVersaoSel));
   const odo = odontogramaVersao?.dentes || {};
   const perio = rascunho || ultimaVersao?.dentes || {};
+  useUnsavedChanges("periograma-rascunho", !!rascunho, "Rascunho do periograma");
 
   useEffect(() => {
     if (!pacSel) {
@@ -6489,9 +6510,40 @@ export default function App() {
   const [usuarioAtivo, setUsuarioAtivo] = useState(null);
   const [pacientesLoaded, setPacientesLoaded] = useState(false);
   const [appStateLoaded, setAppStateLoaded] = useState(false);
+  const [alteracoesPendentes, setAlteracoesPendentes] = useState({});
   const inputImportRef = useRef(null);
   const pacientesRef = useRef(state.pacientes);
   const dbDispatch = useSupabaseDispatch(dispatch, session, pacientesRef);
+
+  const registrarAlteracaoPendente = useCallback((id, label) => {
+    setAlteracoesPendentes(atuais => {
+      if (label && atuais[id] === label) return atuais;
+      if (!label && !(id in atuais)) return atuais;
+      const proximas = { ...atuais };
+      if (label) proximas[id] = label;
+      else delete proximas[id];
+      return proximas;
+    });
+  }, []);
+
+  const confirmarSaidaComPendencias = useCallback(() => {
+    const itens = Object.values(alteracoesPendentes);
+    if (!itens.length) return true;
+    const descricao = [...new Set(itens)].join(", ");
+    const sair = window.confirm(`Você tem dados não salvos em: ${descricao}.\n\nPressione “Cancelar” para voltar e salvar, ou “OK” para sair e perder essas alterações.`);
+    if (sair) setAlteracoesPendentes({});
+    return sair;
+  }, [alteracoesPendentes]);
+
+  useEffect(() => {
+    function protegerFechamento(event) {
+      if (!Object.keys(alteracoesPendentes).length) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", protegerFechamento);
+    return () => window.removeEventListener("beforeunload", protegerFechamento);
+  }, [alteracoesPendentes]);
 
   // Manter ref atualizada
   useEffect(() => { pacientesRef.current = state.pacientes; }, [state.pacientes]);
@@ -6663,16 +6715,19 @@ export default function App() {
   }, [dbDispatch]);
 
   function irPara(tabId) {
+    if (tabId === tab) return true;
+    if (!confirmarSaidaComPendencias()) return false;
     setTab(tabId);
     setGrupoAberto(ABA_PARA_GRUPO[tabId] || grupoAberto);
+    return true;
   }
 
   function abrirGrupo(grupoId) {
-    setGrupoAberto(grupoId);
     if (ABA_PARA_GRUPO[tab] !== grupoId) {
       const primeira = GRUPOS.find(g => g.id === grupoId)?.abas[0]?.id;
-      if (primeira) setTab(primeira);
+      if (primeira && !irPara(primeira)) return;
     }
+    setGrupoAberto(grupoId);
   }
 
   function exportarBackup() {
@@ -6690,6 +6745,7 @@ export default function App() {
   }
 
   async function handleLogout() {
+    if (!confirmarSaidaComPendencias()) return;
     await supabase.auth.signOut();
     setUsuarioAtivo(null);
   }
@@ -6752,10 +6808,11 @@ export default function App() {
   const grupoAtual = GRUPOS.find(g => g.id === grupoAberto);
 
   return (
+    <UnsavedChangesContext.Provider value={registrarAlteracaoPendente}>
     <div style={{ minHeight: "100vh", background: C.bg, fontFamily: "'Inter', 'Segoe UI', sans-serif", color: C.text }}>
       {/* Header — nível 1: grupos */}
       <div style={{ background: C.navy, padding: "0 16px", display: "flex", alignItems: "center", gap: 12, minHeight: 56 }}>
-        <button onClick={() => { setTab("dashboard"); setGrupoAberto("inicio"); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+        <button onClick={() => irPara("dashboard")} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
           <span style={{ color: C.white, fontWeight: 800, fontSize: 17, letterSpacing: -0.5 }}>🦷 DentalPro</span>
         </button>
         <div style={{ flex: 1 }} />
@@ -6775,7 +6832,7 @@ export default function App() {
           <span style={{ color: "#7AB8CC", fontSize: 12, whiteSpace: "nowrap" }}>
             {usuarioAtivo.perfil === "Dentista" ? "🩺" : "👤"} {usuarioAtivo.nome.split(" ")[0]}
           </span>
-          <button onClick={() => setUsuarioAtivo(null)} title="Trocar usuário" style={{
+          <button onClick={() => { if (confirmarSaidaComPendencias()) setUsuarioAtivo(null); }} title="Trocar usuário" style={{
             background: "transparent", color: "#A0C4D5", border: "1px solid #2A4A6C", borderRadius: 8,
             padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
           }}>Trocar</button>
@@ -6853,5 +6910,6 @@ export default function App() {
         {tab === "analise"          && <Analise state={state} />}
       </div>
     </div>
+    </UnsavedChangesContext.Provider>
   );
 }
