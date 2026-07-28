@@ -1047,7 +1047,7 @@ function Btn({ children, variant = "primary", onClick, style, disabled }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, maxWidth = 520 }) {
   const [dirty, setDirty] = useState(false);
   const modalId = useRef(`modal-${Math.random().toString(36).slice(2)}`);
   useUnsavedChanges(modalId.current, dirty, title);
@@ -1070,7 +1070,7 @@ function Modal({ title, onClose, children }) {
 
   return (
     <div onClickCapture={validarObrigatorios} onInputCapture={() => setDirty(true)} onChangeCapture={() => setDirty(true)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
-      <div style={{ background: C.white, borderRadius: 14, padding: 28, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+      <div style={{ background: C.white, borderRadius: 14, padding: 28, width: "100%", maxWidth, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h3 style={{ margin: 0, color: C.navy, fontSize: 18 }}>{title}</h3>
           <button onClick={fecharComProtecao} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: C.muted }}>×</button>
@@ -2884,6 +2884,41 @@ function Impressos({ state }) {
   );
 }
 
+function MapaClinicoOrcamento({ odo, selecionados, onDenteClick }) {
+  return <div style={{ overflowX: "auto" }}>
+    <div style={{ minWidth: 620, background: C.bg, borderRadius: 10, padding: 12 }}>
+      <div style={{ display: "flex", justifyContent: "center", gap: 18, marginBottom: 7 }}>
+        <FileiraDentes numeros={DENTES_PERM.supDir} label="SUP. DIREITO →" odo={odo} selectedDentes={selecionados} onDenteClick={onDenteClick} />
+        <div style={{ width: 1, background: C.border }} />
+        <FileiraDentes numeros={DENTES_PERM.supEsq} label="← SUP. ESQUERDO" odo={odo} selectedDentes={selecionados} onDenteClick={onDenteClick} />
+      </div>
+      <div style={{ height: 1, background: C.border, margin: "7px 0" }} />
+      <div style={{ display: "flex", justifyContent: "center", gap: 18 }}>
+        <FileiraDentes numeros={DENTES_PERM.infDir} label="INF. DIREITO →" odo={odo} selectedDentes={selecionados} onDenteClick={onDenteClick} />
+        <div style={{ width: 1, background: C.border }} />
+        <FileiraDentes numeros={DENTES_PERM.infEsq} label="← INF. ESQUERDO" odo={odo} selectedDentes={selecionados} onDenteClick={onDenteClick} />
+      </div>
+    </div>
+  </div>;
+}
+
+function regioesPeriodontais(divisao = "sextantes") {
+  if (divisao === "quadrantes") return [
+    { label: "Quadrante 1", dentes: DENTES_PERM.supDir },
+    { label: "Quadrante 2", dentes: DENTES_PERM.supEsq },
+    { label: "Quadrante 3", dentes: DENTES_PERM.infEsq },
+    { label: "Quadrante 4", dentes: DENTES_PERM.infDir },
+  ];
+  return [
+    { label: "Sextante 1", dentes: DENTES_PERM.supDir.slice(0, 5) },
+    { label: "Sextante 2", dentes: [...DENTES_PERM.supDir.slice(5), ...DENTES_PERM.supEsq.slice(0, 3)] },
+    { label: "Sextante 3", dentes: DENTES_PERM.supEsq.slice(3) },
+    { label: "Sextante 4", dentes: DENTES_PERM.infEsq.slice(3) },
+    { label: "Sextante 5", dentes: [...DENTES_PERM.infEsq.slice(0, 3), ...DENTES_PERM.infDir.slice(5)] },
+    { label: "Sextante 6", dentes: DENTES_PERM.infDir.slice(0, 5) },
+  ];
+}
+
 function Orcamentos({ state, dispatch }) {
   const [modal, setModal] = useState(false);
   const [pacSel, setPacSel] = useState("");
@@ -2891,6 +2926,8 @@ function Orcamentos({ state, dispatch }) {
   const [dentista, setDentista] = useState("");
   const [tabelaSel, setTabelaSel] = useState("");
   const [odontogramaVersaoSel, setOdontogramaVersaoSel] = useState("");
+  const [periogramaVersaoSel, setPeriogramaVersaoSel] = useState("");
+  const [itemAtivo, setItemAtivo] = useState(0);
   const [itens, setItens] = useState([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   const [busca, setBusca] = useState("");
   const [erroSalvar, setErroSalvar] = useState(false);
@@ -2906,6 +2943,13 @@ function Orcamentos({ state, dispatch }) {
     .filter(v => String(v.pacienteId) === String(pacSel))
     .sort((a, b) => b.data.localeCompare(a.data));
   const odontogramaVersao = state.odontogramaVersoes.find(v => v.id === odontogramaVersaoSel);
+  const versoesPeriograma = state.periogramaVersoes
+    .filter(v => String(v.pacienteId) === String(pacSel) && String(v.odontogramaVersaoId) === String(odontogramaVersaoSel))
+    .sort((a, b) => b.data.localeCompare(a.data));
+  const periogramaVersao = state.periogramaVersoes.find(v => v.id === periogramaVersaoSel);
+  const referenciasClinicasCompletas = !!odontogramaVersao && !!periogramaVersao;
+  const podeSalvarOrcamento = !!pacSel && !!dentista && !!tabelaSel && referenciasClinicasCompletas
+    && itens.length > 0 && itens.every(it => !!it.cod && it.dentes?.length > 0);
 
   useEffect(() => {
     if (!tabelaSel && tabelasAtivas.length) {
@@ -2913,8 +2957,25 @@ function Orcamentos({ state, dispatch }) {
     }
   }, [state.tabelasPreco, tabelaSel]);
 
-  function addItem() { setItens(x => [...x, { cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); }
-  function remItem(i) { setItens(x => x.filter((_, idx) => idx !== i)); }
+  useEffect(() => {
+    if (!odontogramaVersaoSel) {
+      setPeriogramaVersaoSel("");
+      return;
+    }
+    const vinculados = state.periogramaVersoes
+      .filter(v => String(v.pacienteId) === String(pacSel) && String(v.odontogramaVersaoId) === String(odontogramaVersaoSel))
+      .sort((a, b) => b.data.localeCompare(a.data));
+    setPeriogramaVersaoSel(vinculados[0]?.id || "");
+  }, [pacSel, odontogramaVersaoSel, state.periogramaVersoes]);
+
+  function addItem() {
+    setItemAtivo(itens.length);
+    setItens(x => [...x, { cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
+  }
+  function remItem(i) {
+    setItens(x => x.filter((_, idx) => idx !== i));
+    setItemAtivo(0);
+  }
 
   function valorParaProcedimento(cod) {
     return Number(catalogoPreco.find(t => String(t.cod) === String(cod))?.valor) || 0;
@@ -2944,13 +3005,38 @@ function Orcamentos({ state, dispatch }) {
     setItens(x => x.map((it, idx) => idx === i ? { ...it, escopo: sel.escopo, dentes: sel.dentes } : it));
   }
 
+  function alternarDenteNoItem(dente) {
+    setItens(atuais => atuais.map((item, indice) => {
+      if (indice !== itemAtivo) return item;
+      const dentes = item.dentes.includes(dente) ? item.dentes.filter(d => d !== dente) : [...item.dentes, dente];
+      return { ...item, escopo: "elemento", dentes };
+    }));
+  }
+
+  function aplicarRegiaoAoItem(dentes) {
+    setItens(atuais => atuais.map((item, indice) => indice === itemAtivo ? { ...item, escopo: "elemento", dentes: [...dentes] } : item));
+  }
+
+  function avisosClinicos(item) {
+    if (!item.cod || !item.dentes?.length || !odontogramaVersao) return [];
+    const nome = (item.proc || "").toLowerCase();
+    const higidos = item.dentes.filter(d => (odontogramaVersao.dentes?.[d]?.status || "higido") === "higido");
+    const naoHigidos = item.dentes.filter(d => (odontogramaVersao.dentes?.[d]?.status || "higido") !== "higido");
+    const invasivo = /restaura|canal|endodont|extra|exodont|implante|coroa|prótese|cirurg/.test(nome);
+    const clareamento = /clareamento/.test(nome);
+    const avisos = [];
+    if (invasivo && higidos.length) avisos.push(`Planejamento clínico: dente(s) ${higidos.join(", ")} estão hígidos neste odontograma. Confirme se o procedimento faz parte de uma etapa futura.`);
+    if (clareamento && naoHigidos.length) avisos.push(`Planejamento em etapas: dente(s) ${naoHigidos.join(", ")} possuem achados clínicos e podem precisar de tratamento antes do clareamento.`);
+    return avisos;
+  }
+
   function editarValor(i, v) {
     setItens(x => x.map((it, idx) => idx === i ? { ...it, valorEditado: v, valor: Number(v) || 0 } : it));
   }
 
   async function salvar() {
     const semDentes = itens.some(it => !it.dentes || it.dentes.length === 0);
-    if (!pacSel || !dentista || !tabelaSel || !odontogramaVersaoSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
+    if (!pacSel || !dentista || !tabelaSel || !odontogramaVersaoSel || !periogramaVersaoSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
     setErroSalvar(false);
     const ok = await dispatch({
       type: "ADD_ORCAMENTO",
@@ -2965,6 +3051,9 @@ function Orcamentos({ state, dispatch }) {
         odontogramaVersaoId: odontogramaVersao?.id || null,
         odontogramaVersaoTitulo: odontogramaVersao?.titulo || null,
         odontogramaVersaoData: odontogramaVersao?.data || null,
+        periogramaVersaoId: periogramaVersao?.id || null,
+        periogramaVersaoTitulo: periogramaVersao?.titulo || null,
+        periogramaVersaoData: periogramaVersao?.data || null,
         itens: itens.map(it => {
           const qtd = it.dentes?.length || 1;
           const valorUnit = Number(it.valorEditado) || it.valor;
@@ -2973,12 +3062,12 @@ function Orcamentos({ state, dispatch }) {
       }
     });
     if (ok === false) return;
-    setModal(false); setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
+    setModal(false); setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setPeriogramaVersaoSel(""); setItemAtivo(0); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
   }
 
   function fecharModal() {
     setModal(false);
-    setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
+    setPacSel(""); setDentista(""); setOdontogramaVersaoSel(""); setPeriogramaVersaoSel(""); setItemAtivo(0); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]);
   }
 
   const total = (orc) => orc.itens.reduce((s, i) => s + i.valor, 0);
@@ -3036,6 +3125,7 @@ function Orcamentos({ state, dispatch }) {
             </div>
             <div style={{ color: C.muted, fontSize: 13, marginTop: 2 }}>Emitido em {orc.data}{orc.dentista && <> · Dr(a). {orc.dentista}</>}</div>
             {orc.odontogramaVersaoTitulo && <div style={{ color: C.teal, fontSize: 11, marginTop: 3 }}>Odontograma: {orc.odontogramaVersaoData} — {orc.odontogramaVersaoTitulo}</div>}
+            {orc.periogramaVersaoTitulo && <div style={{ color: C.teal, fontSize: 11, marginTop: 2 }}>Periograma: {orc.periogramaVersaoData} — {orc.periogramaVersaoTitulo}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 800, color: C.teal, fontSize: 17 }}>{fmt(total(orc))}</span>
@@ -3109,17 +3199,17 @@ function Orcamentos({ state, dispatch }) {
       </div>
 
       {modal && (
-        <Modal title="Novo Orçamento" onClose={fecharModal}>
+        <Modal title="Novo Orçamento Clínico" onClose={fecharModal} maxWidth={920}>
           <div style={{ display: "grid", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Select label="Paciente *" value={pacSel} onChange={e => { setPacSel(e.target.value); setOdontogramaVersaoSel(""); setErroSalvar(false); }} style={erroSalvar && !pacSel ? { borderColor: C.red } : {}}>
+              <Select label="Paciente *" value={pacSel} onChange={e => { setPacSel(e.target.value); setOdontogramaVersaoSel(""); setPeriogramaVersaoSel(""); setErroSalvar(false); }} style={erroSalvar && !pacSel ? { borderColor: C.red } : {}}>
                 <option value="">Selecione…</option>
                 {state.pacientes.map(p => <option key={p.id} value={p.id}>Ficha #{String(p.ficha).padStart(4,"0")} — {p.nome}</option>)}
               </Select>
               <Input label="Data" type="date" value={data} onChange={e => setData(e.target.value)} />
             </div>
 
-            <Select label="Odontograma de referência *" value={odontogramaVersaoSel} onChange={e => { setOdontogramaVersaoSel(e.target.value); setErroSalvar(false); }} style={erroSalvar && !odontogramaVersaoSel ? { borderColor: C.red } : {}}>
+            <Select label="Odontograma de referência *" value={odontogramaVersaoSel} onChange={e => { setOdontogramaVersaoSel(e.target.value); setPeriogramaVersaoSel(""); setErroSalvar(false); }} style={erroSalvar && !odontogramaVersaoSel ? { borderColor: C.red } : {}}>
               <option value="">{pacSel ? "Selecione um momento clínico…" : "Selecione primeiro o paciente"}</option>
               {versoesOdontograma.map(v => <option key={v.id} value={v.id}>{v.data} — {v.titulo}</option>)}
             </Select>
@@ -3128,6 +3218,33 @@ function Orcamentos({ state, dispatch }) {
                 Este paciente ainda não possui uma versão de odontograma. Vá ao Odontograma e registre um momento clínico antes de criar o orçamento.
               </div>
             )}
+
+            <Select disabled={!odontogramaVersaoSel} label="Periograma vinculado *" value={periogramaVersaoSel} onChange={e => { setPeriogramaVersaoSel(e.target.value); setErroSalvar(false); }} style={erroSalvar && !periogramaVersaoSel ? { borderColor: C.red } : {}}>
+              <option value="">{odontogramaVersaoSel ? "Selecione o periograma…" : "Selecione primeiro o odontograma"}</option>
+              {versoesPeriograma.map(v => <option key={v.id} value={v.id}>{v.data} — {v.titulo}</option>)}
+            </Select>
+            {odontogramaVersaoSel && !versoesPeriograma.length && <div style={{ background: C.amberLight, color: C.amber, borderRadius: 8, padding: "9px 12px", fontSize: 12 }}>
+              Este odontograma ainda não possui periograma vinculado. Registre o momento periodontal antes de iniciar o orçamento.
+            </div>}
+
+            {odontogramaVersao && periogramaVersao && <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <strong style={{ color: C.navy }}>Mapa clínico para orçamento</strong>
+                <span style={{ color: C.teal, fontSize: 11 }}>Selecione um procedimento abaixo e clique nos dentes ou regiões</span>
+              </div>
+              <MapaClinicoOrcamento odo={odontogramaVersao.dentes || {}} selecionados={itens[itemAtivo]?.dentes || []} onDenteClick={alternarDenteNoItem} />
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${periogramaVersao.divisao === "quadrantes" ? 2 : 3}, 1fr)`, gap: 7, marginTop: 10 }}>
+                {regioesPeriodontais(periogramaVersao.divisao).map(regiao => {
+                  const dados = regiao.dentes.map(d => periogramaVersao.dentes?.[d]).filter(Boolean);
+                  const conds = [...new Set(dados.flatMap(d => d.condicoes || []))];
+                  return <button key={regiao.label} onClick={() => aplicarRegiaoAoItem(regiao.dentes)} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 0, overflow: "hidden", background: C.white, cursor: "pointer", textAlign: "left" }}>
+                    <div style={{ padding: "5px 8px", fontSize: 10, fontWeight: 800, color: C.navy }}>{regiao.label}</div>
+                    {!conds.length && <div style={{ padding: "4px 8px", fontSize: 10, color: C.muted, background: C.bg }}>Sem achado periodontal</div>}
+                    {conds.map(c => <div key={c} style={{ padding: "4px 8px", fontSize: 10, fontWeight: 700, background: CONDICOES_PERIO[c]?.cor, color: C.white }}>{CONDICOES_PERIO[c]?.label}</div>)}
+                  </button>;
+                })}
+              </div>
+            </div>}
 
             <Select label="Dentista responsável *" value={dentista} onChange={e => { setDentista(e.target.value); setErroSalvar(false); }} style={erroSalvar && !dentista ? { borderColor: C.red } : {}}>
               <option value="">Selecione o dentista…</option>
@@ -3148,11 +3265,14 @@ function Orcamentos({ state, dispatch }) {
               </div>
             )}
 
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
+            {!referenciasClinicasCompletas && <div style={{ background: C.amberLight, color: C.amber, borderRadius: 8, padding: "9px 12px", fontSize: 12, fontWeight: 700 }}>
+              Selecione primeiro o odontograma e o periograma vinculados. Os procedimentos serão liberados somente depois dessas referências clínicas.
+            </div>}
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, pointerEvents: referenciasClinicasCompletas ? "auto" : "none", opacity: referenciasClinicasCompletas ? 1 : 0.45 }}>
               <div style={{ fontWeight: 700, color: C.navy, fontSize: 13, marginBottom: 12 }}>PROCEDIMENTOS</div>
 
               {itens.map((it, i) => (
-                <div key={i} style={{ background: C.bg, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+                <div key={i} onClick={() => setItemAtivo(i)} style={{ background: C.bg, borderRadius: 10, padding: "10px 12px", marginBottom: 10, border: `2px solid ${itemAtivo === i ? C.teal : "transparent"}` }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 36px", gap: 8, alignItems: "end", marginBottom: 10 }}>
                     <ProcSearch
                       label={`Procedimento ${i + 1} *`}
@@ -3166,6 +3286,8 @@ function Orcamentos({ state, dispatch }) {
                       style={{ background: C.redLight, color: C.red, border: "none", borderRadius: 8, cursor: "pointer", fontSize: 18, height: 36, width: 36 }}
                     >×</button>
                   </div>
+
+                  {avisosClinicos(it).map((aviso, indice) => <div key={indice} style={{ background: C.amberLight, color: C.amber, borderRadius: 7, padding: "7px 9px", fontSize: 11, marginBottom: 8 }}>⚠ {aviso} O orçamento continua permitido.</div>)}
 
                   {/* Seletor de dente(s) / hemiarco / arco para este procedimento */}
                   <div style={{ marginBottom: 10, background: C.white, borderRadius: 8, padding: "10px 10px", border: `1.5px solid ${erroSalvar && it.dentes.length === 0 ? C.red : "transparent"}` }}>
@@ -3218,13 +3340,13 @@ function Orcamentos({ state, dispatch }) {
 
             {erroSalvar && (
               <div style={{ background: C.redLight, color: C.red, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
-                Selecione o paciente, o odontograma de referência, a tabela de preços, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
+                Selecione o paciente, o odontograma, o periograma vinculado, a tabela de preços, o dentista responsável, o procedimento e ao menos um dente para cada item antes de salvar.
               </div>
             )}
 
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Btn variant="ghost" onClick={fecharModal}>Cancelar</Btn>
-              <Btn onClick={salvar}>Salvar Orçamento</Btn>
+              <Btn disabled={!podeSalvarOrcamento} onClick={salvar}>Salvar Orçamento</Btn>
             </div>
           </div>
         </Modal>
@@ -5499,14 +5621,14 @@ const STATUS_CLINICO = {
 };
 
 // Ícone do dente — preenchido conforme status clínico atual
-function DenteIcone({ dente, dados, onClick, size = 42 }) {
+function DenteIcone({ dente, dados, onClick, size = 42, selected = false }) {
   const status = dados?.status || "higido";
   const info = STATUS_CLINICO[status] || STATUS_CLINICO.higido;
   const cx = size / 2, cy = size / 2, r = size * 0.42;
   const ausente = status === "ausente";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", userSelect: "none" }} onClick={onClick}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "pointer", userSelect: "none", borderRadius: 8, padding: 2, background: selected ? C.tealLight : "transparent", outline: selected ? `2px solid ${C.teal}` : "none" }} onClick={onClick}>
       <div style={{ fontSize: 9, fontWeight: 700, color: status !== "higido" ? info.borda : "#6B8399", lineHeight: 1 }}>{dente}</div>
       <svg width={size} height={size}>
         {ausente ? (
@@ -5523,13 +5645,13 @@ function DenteIcone({ dente, dados, onClick, size = 42 }) {
   );
 }
 
-function FileiraDentes({ numeros, label, odo, onDenteClick }) {
+function FileiraDentes({ numeros, label, odo, onDenteClick, selectedDentes = [] }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <div style={{ fontSize: 9, color: "#6B8399", fontWeight: 700, letterSpacing: 1 }}>{label}</div>
       <div style={{ display: "flex", gap: 2 }}>
         {numeros.map(d => (
-          <DenteIcone key={d} dente={d} dados={odo[d]} onClick={() => onDenteClick(d)} size={42} />
+          <DenteIcone key={d} dente={d} dados={odo[d]} selected={selectedDentes.includes(d)} onClick={() => onDenteClick(d)} size={42} />
         ))}
       </div>
     </div>
@@ -6273,6 +6395,9 @@ function orcamentoFromRow(o) {
     odontogramaVersaoId: o.odontograma_versao_id || null,
     odontogramaVersaoTitulo: o.odontograma_versao_titulo || null,
     odontogramaVersaoData: o.odontograma_versao_data || null,
+    periogramaVersaoId: o.periograma_versao_id || null,
+    periogramaVersaoTitulo: o.periograma_versao_titulo || null,
+    periogramaVersaoData: o.periograma_versao_data || null,
     itens: Array.isArray(o.itens) ? o.itens : [],
     status: o.status,
     createdAt: o.created_at,
@@ -6375,6 +6500,9 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
           odontograma_versao_id: o.odontogramaVersaoId,
           odontograma_versao_titulo: o.odontogramaVersaoTitulo,
           odontograma_versao_data: o.odontogramaVersaoData,
+          periograma_versao_id: o.periogramaVersaoId,
+          periograma_versao_titulo: o.periogramaVersaoTitulo,
+          periograma_versao_data: o.periogramaVersaoData,
           itens: o.itens, status: "pendente",
         }).select().single();
         if (error) { window.alert(`Não foi possível salvar o orçamento: ${error.message}`); return false; }
