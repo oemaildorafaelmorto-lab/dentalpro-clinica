@@ -233,7 +233,8 @@ function reducer(state, action) {
         orcamentos: state.orcamentos.map(o => o.id === action.payload.id ? action.payload : o),
       };
     case "APROVAR_ORCAMENTO": {
-      return { ...state, orcamentos: state.orcamentos.map(o => o.id === action.payload ? { ...o, status: "aprovado" } : o) };
+      const id = action.payload?.id ?? action.payload;
+      return { ...state, orcamentos: state.orcamentos.map(o => o.id === id ? { ...o, status: action.payload?.status || "aprovado", itens: action.payload?.itens || o.itens } : o) };
     }
     case "ADD_BAIXA": {
       // Baixa = procedimento foi realizado. NÃO lança caixa e NÃO exige pagamento.
@@ -575,7 +576,7 @@ function Dashboard({ state, usuario, onTrocarUsuario }) {
   const contasAtrasadas = state.contasPagar.filter(c => c.status !== "paga" && c.vencimento < hoje);
 
   // Orçamentos pendentes de aprovação
-  const orcPendentes = state.orcamentos.filter(o => o.status === "pendente");
+  const orcPendentes = state.orcamentos.filter(o => o.status === "pendente" || o.status === "parcialmente_aprovado");
 
   // Procedimentos realizados hoje
   const baixasHoje = state.baixas.filter(b => b.data === hoje);
@@ -692,7 +693,7 @@ function Dashboard({ state, usuario, onTrocarUsuario }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {orcPendentes.slice(0, 4).map(o => {
                 const pac = state.pacientes.find(p => p.id === o.pacienteId);
-                const total = o.itens.reduce((s, i) => s + i.valor, 0);
+                const total = o.itens.reduce((s, i) => s + ((i.status || (o.status === "aprovado" ? "aprovado" : "pendente")) === "pendente" ? i.valor : 0), 0);
                 return (
                   <div key={o.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between" }}>
                     <span style={{ color: C.text }}>{pac?.nome || "—"}</span>
@@ -1101,7 +1102,7 @@ function FichaPaciente({ paciente: p, state, dispatch, onVoltar, onEditar }) {
     .filter(b => b.pacienteId === p.id)
     .sort((a, b) => b.data.localeCompare(a.data));
 
-  const statusColor = { pendente: "amber", aprovado: "green", cancelado: "red" };
+  const statusColor = { pendente: "amber", parcialmente_aprovado: "amber", aprovado: "green", cancelado: "red" };
   const tipoInfo = (k) => ({
     consulta: { cor: C.teal, icone: "🩺", label: "Consulta" },
     evolucao: { cor: "#9B59B6", icone: "📝", label: "Evolução clínica" },
@@ -1187,8 +1188,8 @@ function FichaPaciente({ paciente: p, state, dispatch, onVoltar, onEditar }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontWeight: 800, color: C.teal }}>{fmt(totalOrc)}</span>
                       <span style={{ color: C.muted, fontSize: 12 }}>{orc.data}</span>
-                      {orc.status === "pendente" && (
-                        <Btn variant="green" onClick={() => dispatch({ type: "APROVAR_ORCAMENTO", payload: orc.id })}>✓ Aprovar</Btn>
+                      {(orc.status === "pendente" || orc.status === "parcialmente_aprovado") && (
+                        <Btn variant="green" onClick={() => window.alert("Faça a aprovação total ou por procedimento na aba Clínico → Orçamentos.")}>✓ Aprovar</Btn>
                       )}
                     </div>
                   </div>
@@ -2932,6 +2933,7 @@ function Orcamentos({ state, dispatch }) {
   const [busca, setBusca] = useState("");
   const [erroSalvar, setErroSalvar] = useState(false);
   const [visualizando, setVisualizando] = useState(null); // orçamento sendo visualizado/impresso
+  const [aprovando, setAprovando] = useState(null); // { orc, selecionados: number[] }
 
   const tabelasAtivas = state.tabelasPreco.filter(t => t.ativo);
   const tabelaPreco = state.tabelasPreco.find(t => t.id === tabelaSel);
@@ -3057,7 +3059,7 @@ function Orcamentos({ state, dispatch }) {
         itens: itens.map(it => {
           const qtd = it.dentes?.length || 1;
           const valorUnit = Number(it.valorEditado) || it.valor;
-          return { cod: it.cod, proc: it.proc, valorUnit, valor: valorUnit * qtd, dentes: it.dentes, escopo: it.escopo };
+          return { cod: it.cod, proc: it.proc, valorUnit, valor: valorUnit * qtd, dentes: it.dentes, escopo: it.escopo, status: "pendente" };
         }),
       }
     });
@@ -3076,7 +3078,33 @@ function Orcamentos({ state, dispatch }) {
     return s + (Number(i.valorEditado) || 0) * qtd;
   }, 0);
   const getPac = (id) => state.pacientes.find(p => String(p.id) === String(id));
-  const statusColor = { pendente: "amber", aprovado: "green", cancelado: "red" };
+  const statusColor = { pendente: "amber", parcialmente_aprovado: "amber", aprovado: "green", cancelado: "red" };
+  const statusLabel = { pendente: "PENDENTE", parcialmente_aprovado: "PARCIALMENTE APROVADO", aprovado: "APROVADO", cancelado: "CANCELADO" };
+
+  function abrirAprovacao(orc) {
+    const pendentes = orc.itens.map((item, i) => (item.status || (orc.status === "aprovado" ? "aprovado" : "pendente")) !== "aprovado" ? i : null).filter(i => i !== null);
+    setAprovando({ orc, selecionados: pendentes });
+  }
+
+  function alternarItemAprovacao(indice) {
+    setAprovando(atual => ({
+      ...atual,
+      selecionados: atual.selecionados.includes(indice)
+        ? atual.selecionados.filter(i => i !== indice)
+        : [...atual.selecionados, indice],
+    }));
+  }
+
+  async function confirmarAprovacao() {
+    if (!aprovando?.selecionados.length) return;
+    const agora = new Date().toISOString();
+    const itens = aprovando.orc.itens.map((item, indice) => aprovando.selecionados.includes(indice)
+      ? { ...item, status: "aprovado", aprovadoEm: agora }
+      : { ...item, status: item.status || "pendente" });
+    const status = itens.every(item => item.status === "aprovado") ? "aprovado" : "parcialmente_aprovado";
+    const ok = await dispatch({ type: "APROVAR_ORCAMENTO", payload: { id: aprovando.orc.id, itens, status } });
+    if (ok !== false) setAprovando(null);
+  }
 
   // Filtra e ordena a lista de orçamentos
   const listaOrc = useMemo(() => {
@@ -3114,6 +3142,8 @@ function Orcamentos({ state, dispatch }) {
 
   // Renderiza o card de um orçamento — extraído pra evitar duplicação entre vista normal e agrupada
   function renderOrc(orc, pac) {
+    const totalAprovado = orc.itens.reduce((s, item) => s + ((item.status || (orc.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado" ? item.valor : 0), 0);
+    const totalPendente = total(orc) - totalAprovado;
     return (
       <Card key={orc.id}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
@@ -3128,12 +3158,16 @@ function Orcamentos({ state, dispatch }) {
             {orc.periogramaVersaoTitulo && <div style={{ color: C.teal, fontSize: 11, marginTop: 2 }}>Periograma: {orc.periogramaVersaoData} — {orc.periogramaVersaoTitulo}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 800, color: C.teal, fontSize: 17 }}>{fmt(total(orc))}</span>
-            <Badge color={statusColor[orc.status]}>{orc.status.toUpperCase()}</Badge>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontWeight: 800, color: C.teal, fontSize: 17 }}>{fmt(total(orc))} <span style={{ color: C.muted, fontSize: 10 }}>PROPOSTO</span></div>
+              {!!totalAprovado && <div style={{ color: C.green, fontSize: 11 }}>Aprovado: {fmt(totalAprovado)}</div>}
+              {!!totalPendente && totalPendente !== total(orc) && <div style={{ color: C.amber, fontSize: 11 }}>Pendente: {fmt(totalPendente)}</div>}
+            </div>
+            <Badge color={statusColor[orc.status]}>{statusLabel[orc.status] || orc.status.toUpperCase()}</Badge>
             <Btn variant="ghost" onClick={() => setVisualizando(orc)}>🖨 Visualizar</Btn>
-            {orc.status === "pendente" && (
-              <Btn variant="green" onClick={() => dispatch({ type: "APROVAR_ORCAMENTO", payload: orc.id })}>
-                ✓ Aprovar
+            {(orc.status === "pendente" || orc.status === "parcialmente_aprovado") && (
+              <Btn variant="green" onClick={() => abrirAprovacao(orc)}>
+                ✓ Aprovar procedimentos
               </Btn>
             )}
           </div>
@@ -3149,6 +3183,9 @@ function Orcamentos({ state, dispatch }) {
                   {it.dentes && <span style={{ color: C.teal, fontSize: 11, marginLeft: 6 }}>· dente{qtd>1?"s":""} {it.dentes.join(", ")}</span>}
                   {qtd > 1 && it.valorUnit && <span style={{ color: C.muted, fontSize: 11, marginLeft: 6 }}>({fmt(it.valorUnit)} × {qtd})</span>}
                 </span>
+                <Badge color={(it.status || (orc.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado" ? "green" : "amber"}>
+                  {(it.status || (orc.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado" ? "APROVADO" : "PENDENTE"}
+                </Badge>
                 <span style={{ fontWeight: 600, color: C.teal }}>{fmt(it.valor)}</span>
               </div>
             );
@@ -3352,6 +3389,43 @@ function Orcamentos({ state, dispatch }) {
         </Modal>
       )}
 
+      {aprovando && <Modal title="Aprovar orçamento" onClose={() => setAprovando(null)} maxWidth={680}>
+        <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ background: C.tealLight, color: C.teal, borderRadius: 9, padding: 11, fontSize: 12 }}>
+            Escolha o orçamento completo ou somente os procedimentos aceitos pelo paciente. Os demais continuarão pendentes para uma aprovação futura.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="green" onClick={() => setAprovando(a => ({ ...a, selecionados: a.orc.itens.map((item, i) => (item.status || "pendente") !== "aprovado" ? i : null).filter(i => i !== null) }))}>Aprovar tudo que falta</Btn>
+            <Btn variant="ghost" onClick={() => setAprovando(a => ({ ...a, selecionados: [] }))}>Selecionar manualmente</Btn>
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {aprovando.orc.itens.map((item, indice) => {
+              const jaAprovado = (item.status || (aprovando.orc.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado";
+              const marcado = jaAprovado || aprovando.selecionados.includes(indice);
+              return <label key={indice} style={{ display: "flex", gap: 10, alignItems: "center", border: `2px solid ${marcado ? C.green : C.border}`, background: marcado ? C.greenLight : C.white, borderRadius: 9, padding: 11, cursor: jaAprovado ? "default" : "pointer" }}>
+                <input type="checkbox" disabled={jaAprovado} checked={marcado} onChange={() => alternarItemAprovacao(indice)} />
+                <div style={{ flex: 1 }}>
+                  <strong style={{ color: C.navy }}>{item.proc}</strong>
+                  {item.dentes?.length > 0 && <div style={{ color: C.teal, fontSize: 11 }}>Dente(s): {item.dentes.join(", ")}</div>}
+                </div>
+                {jaAprovado && <Badge color="green">JÁ APROVADO</Badge>}
+                <strong style={{ color: C.teal }}>{fmt(item.valor)}</strong>
+              </label>;
+            })}
+          </div>
+          <div style={{ background: C.navy, color: C.white, borderRadius: 9, padding: 12, display: "flex", justifyContent: "space-between" }}>
+            <span>Valor aprovado nesta ação</span>
+            <strong>{fmt(aprovando.orc.itens.reduce((total, item, indice) => total + (aprovando.selecionados.includes(indice) ? item.valor : 0), 0))}</strong>
+          </div>
+          {!aprovando.selecionados.length && <div style={{ color: C.red, fontSize: 12 }}>Selecione pelo menos um procedimento pendente.</div>}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Btn variant="ghost" onClick={() => setAprovando(null)}>Cancelar</Btn>
+            <Btn variant="green" disabled={!aprovando.selecionados.length} onClick={confirmarAprovacao}>Confirmar aprovação</Btn>
+          </div>
+          <div style={{ color: C.muted, fontSize: 11 }}>A aprovação autoriza o tratamento. A entrada no caixa continua sendo registrada na etapa de pagamento, com a forma e a data corretas.</div>
+        </div>
+      </Modal>}
+
       {visualizando && (
         <OrcamentoImprimivel
           orcamento={visualizando}
@@ -3371,7 +3445,7 @@ function Baixas({ state, dispatch }) {
   const [form, setForm] = useState({ proc: "", valor: "", data: today(), dentista: "" });
   const [erroSalvar, setErroSalvar] = useState(false);
 
-  const orcAprovados = state.orcamentos.filter(o => o.status === "aprovado");
+  const orcAprovados = state.orcamentos.filter(o => o.status === "aprovado" || o.status === "parcialmente_aprovado");
   const getPac = (id) => state.pacientes.find(p => p.id === id);
 
   function abrirBaixa(orc, item, idx) {
@@ -3419,8 +3493,9 @@ function Baixas({ state, dispatch }) {
         )}
         {orcAprovados.map(orc => {
           const pac = getPac(orc.pacienteId);
-          const totalOrc = orc.itens.reduce((s, i) => s + i.valor, 0);
-          const totalRealizado = orc.itens.reduce((s, it, idx) => s + (jaLancado(orc.id, it.proc, idx) ? it.valor : 0), 0);
+          const itensAprovados = orc.itens.map((item, idx) => ({ item, idx })).filter(({ item }) => (item.status || (orc.status === "aprovado" ? "aprovado" : "pendente")) === "aprovado");
+          const totalOrc = itensAprovados.reduce((s, { item }) => s + item.valor, 0);
+          const totalRealizado = itensAprovados.reduce((s, { item, idx }) => s + (jaLancado(orc.id, item.proc, idx) ? item.valor : 0), 0);
           const completo = totalRealizado >= totalOrc;
           return (
             <Card key={orc.id}>
@@ -3437,7 +3512,7 @@ function Baixas({ state, dispatch }) {
                   {completo && <Badge color="teal">TODOS REALIZADOS</Badge>}
                 </div>
               </div>
-              {orc.itens.map((it, i) => {
+              {itensAprovados.map(({ item: it, idx: i }) => {
                 const feito = jaLancado(orc.id, it.proc, i);
                 const baixa = feito ? baixaDoItem(orc.id, it.proc, i) : null;
                 return (
@@ -6383,6 +6458,9 @@ function tabelaPrecoFromRow(t) {
 }
 
 function orcamentoFromRow(o) {
+  const itens = Array.isArray(o.itens)
+    ? o.itens.map(item => ({ ...item, status: item.status || (o.status === "aprovado" ? "aprovado" : "pendente") }))
+    : [];
   return {
     id: o.id,
     pacienteId: o.paciente_id,
@@ -6398,7 +6476,7 @@ function orcamentoFromRow(o) {
     periogramaVersaoId: o.periograma_versao_id || null,
     periogramaVersaoTitulo: o.periograma_versao_titulo || null,
     periogramaVersaoData: o.periograma_versao_data || null,
-    itens: Array.isArray(o.itens) ? o.itens : [],
+    itens,
     status: o.status,
     createdAt: o.created_at,
   };
@@ -6509,9 +6587,10 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         dispatch({ type: "ADD_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
         return true;
       } else if (action.type === "APROVAR_ORCAMENTO") {
+        const payload = action.payload;
         const { data, error } = await supabase.from("orcamentos")
-          .update({ status: "aprovado", updated_at: new Date().toISOString() })
-          .eq("id", action.payload).select().single();
+          .update({ status: payload.status || "aprovado", itens: payload.itens, updated_at: new Date().toISOString() })
+          .eq("id", payload.id).select().single();
         if (error) { window.alert(`Não foi possível aprovar o orçamento: ${error.message}`); return false; }
         dispatch({ type: "APROVAR_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
         return true;
