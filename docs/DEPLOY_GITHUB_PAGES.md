@@ -8,7 +8,7 @@ sempre que houver um push na branch `master`.
 1. No GitHub, acesse **Settings → Secrets and variables → Actions**.
 2. Cadastre estes *repository secrets*:
    - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
 3. Em **Settings → Pages → Build and deployment**, selecione **GitHub Actions**
    como fonte.
 4. Execute o workflow **Deploy no GitHub Pages** ou faça push para `master`.
