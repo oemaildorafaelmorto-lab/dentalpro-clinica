@@ -195,6 +195,15 @@ function reducer(state, action) {
       const o = { ...action.payload, id: state.nextId.orc, status: "pendente" };
       return { ...state, orcamentos: [...state.orcamentos, o], nextId: { ...state.nextId, orc: state.nextId.orc + 1 } };
     }
+    case "LOAD_ORCAMENTOS":
+      return { ...state, orcamentos: action.payload };
+    case "ADD_ORCAMENTO_PERSISTED":
+      return { ...state, orcamentos: [...state.orcamentos, action.payload] };
+    case "APROVAR_ORCAMENTO_PERSISTED":
+      return {
+        ...state,
+        orcamentos: state.orcamentos.map(o => o.id === action.payload.id ? action.payload : o),
+      };
     case "APROVAR_ORCAMENTO": {
       return { ...state, orcamentos: state.orcamentos.map(o => o.id === action.payload ? { ...o, status: "aprovado" } : o) };
     }
@@ -654,7 +663,7 @@ function GerenciarUsuarios({ state, dispatch }) {
   function abrirNovo() { setForm({ nome: "", perfil: "Recepcionista" }); setEditando(null); setModal(true); }
   function abrirEditar(u) { setForm({ nome: u.nome, perfil: u.perfil }); setEditando(u); setModal(true); }
 
-  function salvar() {
+  async function salvar() {
     if (!form.nome.trim()) return;
     if (editando) dispatch({ type: "UPDATE_USUARIO", payload: { ...editando, ...form } });
     else dispatch({ type: "ADD_USUARIO", payload: form });
@@ -1169,6 +1178,8 @@ function Pacientes({ state, dispatch }) {
   const [busca, setBusca] = useState("");
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(emptyForm());
+  const [formInicial, setFormInicial] = useState(emptyForm());
+  const [salvando, setSalvando] = useState(false);
   const [cepStatus, setCepStatus] = useState(null);
   const [erros, setErros] = useState({});
   const [fichaSel, setFichaSel] = useState(null); // paciente cuja ficha está aberta
@@ -1181,8 +1192,20 @@ function Pacientes({ state, dispatch }) {
     )
     .sort((a, b) => a.ficha - b.ficha), [state.pacientes, busca]);
 
-  function abrirNovo() { setForm(emptyForm()); setModal("novo"); setErros({}); setCepStatus(null); }
-  function abrirEditar(p) { setForm({ ...p, endereco: { ...p.endereco } }); setModal("editar"); setErros({}); setCepStatus(null); }
+  function abrirNovo() {
+    const inicial = emptyForm();
+    setForm(inicial); setFormInicial(inicial); setModal("novo"); setErros({}); setCepStatus(null);
+  }
+  function abrirEditar(p) {
+    const inicial = { ...p, endereco: { ...p.endereco } };
+    setForm(inicial); setFormInicial(inicial); setModal("editar"); setErros({}); setCepStatus(null);
+  }
+
+  function tentarFechar() {
+    const alterado = JSON.stringify(form) !== JSON.stringify(formInicial);
+    if (alterado && !window.confirm("Existem dados não salvos. Deseja sair e descartar as alterações?")) return;
+    setModal(null);
+  }
 
   // ── Busca ViaCEP ───────────────────────────────────────────────
   async function buscarCep(cepRaw) {
@@ -1238,12 +1261,15 @@ function Pacientes({ state, dispatch }) {
     return e;
   }
 
-  function salvar() {
+  async function salvar() {
     const e = validar();
     if (Object.keys(e).length > 0) { setErros(e); return; }
-    if (modal === "novo") dispatch({ type: "ADD_PACIENTE", payload: form });
-    else dispatch({ type: "UPDATE_PACIENTE", payload: form });
-    setModal(null);
+    setSalvando(true);
+    const ok = modal === "novo"
+      ? await dispatch({ type: "ADD_PACIENTE", payload: form })
+      : await dispatch({ type: "UPDATE_PACIENTE", payload: form });
+    setSalvando(false);
+    if (ok !== false) setModal(null);
   }
 
   const f = (k) => (e) => { setForm(x => ({ ...x, [k]: e.target.value })); setErros(x => ({ ...x, [k]: undefined })); };
@@ -1320,7 +1346,7 @@ function Pacientes({ state, dispatch }) {
       )}
 
       {modal && (
-        <Modal title={modal === "novo" ? "Novo Paciente" : `Editar Paciente — Ficha #${String(form.ficha).padStart(4, "0")}`} onClose={() => setModal(null)}>
+        <Modal title={modal === "novo" ? "Novo Paciente" : `Editar Paciente — Ficha #${String(form.ficha).padStart(4, "0")}`} onClose={tentarFechar}>
           <div style={{ display: "grid", gap: 14 }}>
 
             {/* ── Nome social ── */}
@@ -1478,8 +1504,8 @@ function Pacientes({ state, dispatch }) {
             )}
 
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-              <Btn onClick={salvar}>Salvar</Btn>
+              <Btn variant="ghost" onClick={tentarFechar}>Cancelar</Btn>
+              <Btn onClick={salvar} disabled={salvando}>{salvando ? "Salvando..." : "Salvar"}</Btn>
             </div>
           </div>
         </Modal>
@@ -2838,11 +2864,11 @@ function Orcamentos({ state, dispatch }) {
     setItens(x => x.map((it, idx) => idx === i ? { ...it, valorEditado: v, valor: Number(v) || 0 } : it));
   }
 
-  function salvar() {
+  async function salvar() {
     const semDentes = itens.some(it => !it.dentes || it.dentes.length === 0);
     if (!pacSel || !dentista || !tabelaSel || itens.some(it => !it.cod) || semDentes) { setErroSalvar(true); return; }
     setErroSalvar(false);
-    dispatch({
+    const ok = await dispatch({
       type: "ADD_ORCAMENTO",
       payload: {
         pacienteId: pacSel,
@@ -2859,6 +2885,7 @@ function Orcamentos({ state, dispatch }) {
         }),
       }
     });
+    if (ok === false) return;
     setModal(false); setPacSel(""); setDentista(""); setItens([{ cod: "", proc: "", valor: "", valorEditado: "", escopo: "elemento", dentes: [] }]); setData(today());
   }
 
@@ -5753,6 +5780,22 @@ function tabelaPrecoFromRow(t) {
   };
 }
 
+function orcamentoFromRow(o) {
+  return {
+    id: o.id,
+    pacienteId: o.paciente_id,
+    data: o.data,
+    dentista: o.dentista,
+    convenioId: o.convenio_id || null,
+    convenioNome: o.convenio_nome || null,
+    tabelaPrecoId: o.tabela_preco_id || null,
+    tabelaPrecoNome: o.tabela_preco_nome || null,
+    itens: Array.isArray(o.itens) ? o.itens : [],
+    status: o.status,
+    createdAt: o.created_at,
+  };
+}
+
 function useSupabaseDispatch(dispatch, session, pacientesRef) {
   return useCallback((action) => {
     async function run() {
@@ -5787,9 +5830,46 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         if (error) {
           console.error("Erro ao salvar paciente no Supabase:", error);
           window.alert(`Não foi possível salvar o paciente: ${error.message}`);
-          return;
+          return false;
         }
         dispatch({ type: "ADD_PACIENTE_PERSISTED", payload: pacienteFromRow(data) });
+        return true;
+      } else if (action.type === "UPDATE_PACIENTE") {
+        const p = action.payload;
+        const { data, error } = await supabase.from("pacientes").update({
+          nome: p.nome, nome_social: p.nomeSocial || false, nome_civil: p.nomeCivil || "",
+          data_nasc: p.dataNasc || null, cpf: p.cpf || "", rg: p.rg || "",
+          telefone: p.telefone || "", email_paciente: p.email || "",
+          responsavel: p.responsavel || "", obs: p.obs || "",
+          rua: p.endereco?.rua || "", numero: p.endereco?.numero || "",
+          complemento: p.endereco?.complemento || "", bairro: p.endereco?.bairro || "",
+          cep: p.endereco?.cep || "", cidade: p.endereco?.cidade || "",
+          estado: p.endereco?.estado || "", updated_at: new Date().toISOString(),
+        }).eq("id", p._supabaseId || p.id).select().single();
+        if (error) {
+          window.alert(`Não foi possível atualizar o paciente: ${error.message}`);
+          return false;
+        }
+        dispatch({ type: "UPDATE_PACIENTE", payload: pacienteFromRow(data) });
+        return true;
+      } else if (action.type === "ADD_ORCAMENTO") {
+        const o = action.payload;
+        const { data, error } = await supabase.from("orcamentos").insert({
+          user_id: session.user.id, paciente_id: o.pacienteId, data: o.data,
+          dentista: o.dentista, convenio_id: o.convenioId ? String(o.convenioId) : null,
+          convenio_nome: o.convenioNome, tabela_preco_id: o.tabelaPrecoId,
+          tabela_preco_nome: o.tabelaPrecoNome, itens: o.itens, status: "pendente",
+        }).select().single();
+        if (error) { window.alert(`Não foi possível salvar o orçamento: ${error.message}`); return false; }
+        dispatch({ type: "ADD_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
+        return true;
+      } else if (action.type === "APROVAR_ORCAMENTO") {
+        const { data, error } = await supabase.from("orcamentos")
+          .update({ status: "aprovado", updated_at: new Date().toISOString() })
+          .eq("id", action.payload).select().single();
+        if (error) { window.alert(`Não foi possível aprovar o orçamento: ${error.message}`); return false; }
+        dispatch({ type: "APROVAR_ORCAMENTO_PERSISTED", payload: orcamentoFromRow(data) });
+        return true;
       } else if (action.type === "ADD_TABELA_PRECO") {
         const p = action.payload;
         if (p.padrao) {
@@ -5828,9 +5908,10 @@ function useSupabaseDispatch(dispatch, session, pacientesRef) {
         dispatch(action);
       } else {
         dispatch(action);
+        return true;
       }
     }
-    run();
+    return run();
   }, [dispatch, session, pacientesRef]);
 }
 
@@ -5894,12 +5975,27 @@ export default function App() {
     loadTabelasPreco();
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    async function loadOrcamentos() {
+      const { data, error } = await supabase
+        .from("orcamentos")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: false });
+      if (error) { console.error("Erro ao carregar orçamentos:", error); return; }
+      dispatch({ type: "LOAD_ORCAMENTOS", payload: (data || []).map(orcamentoFromRow) });
+    }
+    loadOrcamentos();
+  }, [session]);
+
   // ── Interceptador: ADD_PACIENTE usa dbDispatch para gravar no Supabase ──
   const patchedDispatch = useCallback((action) => {
-    if (["ADD_PACIENTE", "DELETE_PACIENTE", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
-      dbDispatch(action);
+    if (["ADD_PACIENTE", "UPDATE_PACIENTE", "DELETE_PACIENTE", "ADD_ORCAMENTO", "APROVAR_ORCAMENTO", "ADD_TABELA_PRECO", "UPDATE_TABELA_PRECO", "DELETE_TABELA_PRECO"].includes(action.type)) {
+      return dbDispatch(action);
     } else {
       dispatch(action);
+      return Promise.resolve(true);
     }
   }, [dbDispatch]);
 
