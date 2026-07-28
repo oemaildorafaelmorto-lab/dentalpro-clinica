@@ -31,6 +31,17 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Validar configuração do Supabase
+        shell: bash
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$VITE_SUPABASE_URL" || { echo "::error::Secret VITE_SUPABASE_URL ausente"; exit 1; }
+          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "::error::Secret VITE_SUPABASE_ANON_KEY ausente"; exit 1; }
+          [[ "$VITE_SUPABASE_URL" == https://*.supabase.co ]] || { echo "::error::VITE_SUPABASE_URL inválida"; exit 1; }
+          [[ "$VITE_SUPABASE_ANON_KEY" == sb_publishable_* ]] || { echo "::error::VITE_SUPABASE_ANON_KEY não contém a publishable key"; exit 1; }
+
       - name: Gerar build
         run: npm run build
         env:
